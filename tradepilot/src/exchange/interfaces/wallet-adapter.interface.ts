@@ -1,0 +1,35 @@
+import { AccountBalance, ExchangeCredential } from '../../types/exchange.types';
+import type { Keypair } from '@solana/web3.js';
+
+export interface LinkAccountResult {
+  walletAddress: string;
+  sessionSecret?: string;
+  requiresOnChainActivation: boolean;
+  /** The wallet authenticated, but the exchange still requires trader registration. */
+  requiresTraderRegistration?: boolean;
+  /** Base64/hex unsigned transaction the user's wallet must sign to activate, if required. */
+  activationTransaction?: string;
+}
+
+/** Signs the exact byte sequence supplied by an exchange during wallet login. */
+export type WalletMessageSigner = (message: Uint8Array) => Promise<string>;
+
+export interface RegisterAccountResult {
+  transactionSignature: string;
+  traderAccount: string;
+}
+
+/**
+ * Handles linking a user's wallet to the exchange and reading balances.
+ * Every exchange adapter must implement this so onboarding never needs
+ * exchange-specific branches in the bot layer.
+ */
+export interface WalletAdapter {
+  /** Links a wallet, signing any exchange challenge with the wallet authority. */
+  linkAccount(walletAddress: string, signMessage: WalletMessageSigner): Promise<LinkAccountResult>;
+
+  /** Registers a trade-ready account on the exchange, using the wallet as fee payer. */
+  registerAccount?(walletAddress: string, feePayer: Keypair): Promise<RegisterAccountResult>;
+
+  getBalances(credential: ExchangeCredential): Promise<AccountBalance[]>;
+}

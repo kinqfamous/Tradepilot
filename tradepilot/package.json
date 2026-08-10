@@ -1,0 +1,52 @@
+{
+  "name": "tradepilot",
+  "version": "1.0.0",
+  "description": "TradePilot - Telegram-native perpetual trading platform (Phoenix Perps first adapter)",
+  "private": true,
+  "license": "UNLICENSED",
+  "main": "dist/index.js",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/index.js",
+    "worker": "tsx watch src/queues/worker.ts",
+    "prisma:generate": "prisma generate",
+    "prisma:migrate": "prisma migrate dev --name init",
+    "prisma:deploy": "prisma migrate deploy",
+    "lint": "eslint \"src/**/*.ts\"",
+    "format": "prettier --write \"src/**/*.ts\"",
+    "postinstall": "prisma generate"
+  },
+  "dependencies": {
+    "@ellipsis-labs/rise": "^0.4.67",
+    "@prisma/client": "5.20.0",
+    "@solana/web3.js": "1.95.3",
+    "axios": "1.7.7",
+    "bs58": "5.0.0",
+    "bullmq": "5.12.14",
+    "dotenv": "16.4.5",
+    "ioredis": "5.4.1",
+    "jsonwebtoken": "9.0.2",
+    "pino": "9.4.0",
+    "pino-pretty": "11.2.2",
+    "telegraf": "4.16.3",
+    "ws": "8.18.0",
+    "zod": "3.23.8"
+  },
+  "devDependencies": {
+    "@types/jsonwebtoken": "9.0.7",
+    "@types/node": "20.14.10",
+    "@types/ws": "8.5.12",
+    "@typescript-eslint/eslint-plugin": "7.16.0",
+    "@typescript-eslint/parser": "7.16.0",
+    "eslint": "8.57.0",
+    "eslint-config-prettier": "9.1.0",
+    "prettier": "3.3.3",
+    "prisma": "5.20.0",
+    "tsx": "4.16.2",
+    "typescript": "5.5.3"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

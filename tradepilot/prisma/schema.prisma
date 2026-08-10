@@ -1,0 +1,396 @@
+// ============================================================
+// TradePilot - Production Database Schema
+// PostgreSQL + Prisma ORM
+// ============================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ------------------------------------------------------------
+// Users & Auth
+// ------------------------------------------------------------
+
+enum UserStatus {
+  ONBOARDING
+  ACTIVE
+  SUSPENDED
+  BANNED
+}
+
+model User {
+  id                Int        @id @default(autoincrement())
+  telegramId        BigInt     @unique
+  telegramUsername  String?
+  status            UserStatus @default(ONBOARDING)
+  acceptedTermsAt   DateTime?
+  preferredExchange String     @default("phoenix")
+
+  referralCode   String  @unique
+  referredById   Int?
+  referredBy     User?   @relation("Referrals", fields: [referredById], references: [id])
+  referrals      User[]  @relation("Referrals")
+
+  createdAt DateTime @updatedAt @default(now())
+  updatedAt DateTime @updatedAt
+
+  wallets       ExchangeAccount[]
+  positions     Position[]
+  orders        Order[]
+  trades        Trade[]
+  settings      UserSettings?
+  notifications Notification[]
+  sessions      UserSession[]
+  referralStats ReferralStats?
+  auditLogs     AdminAuditLog[]  @relation("AdminActor")
+
+  @@index([status])
+  @@index([referredById])
+}
+
+// Internal app session (JWT-backed), separate from any exchange session.
+model UserSession {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  user      User     @relation(fields: [userId], references: [id])
+  tokenHash String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  revokedAt DateTime?
+
+  @@index([userId])
+}
+
+// A linked exchange account. One user can (eventually) link accounts on
+// multiple exchanges; `exchange` is a free-text adapter key ("phoenix",
+// "hyperliquid", "drift", "jupiter") so new exchanges never require a
+// schema migration to onboard.
+enum ExchangeAccountStatus {
+  PENDING_VERIFICATION
+  VERIFIED
+  REVOKED
+}
+
+model ExchangeAccount {
+  id            Int                   @id @default(autoincrement())
+  userId        Int
+  user          User                  @relation(fields: [userId], references: [id])
+  exchange      String // adapter key, e.g. "phoenix"
+  walletAddress String
+  // Encrypted session/auth secret returned by the exchange, if any is
+  // required beyond wallet-signature auth (AES-256-GCM, see utils/encryption).
+  encryptedCredential String?
+  credentialIv        String?
+  credentialAuthTag   String?
+  // Encrypted Solana private key (AES-256-GCM), only present when the user
+  // opted for bot-signed trading rather than signing each transaction
+  // themselves in an external wallet. Required for Phoenix today since
+  // trades are on-chain transactions the bot must sign to execute
+  // instantly from Telegram.
+  encryptedPrivateKey String?
+  privateKeyIv        String?
+  privateKeyAuthTag   String?
+  status               ExchangeAccountStatus @default(PENDING_VERIFICATION)
+  linkedAt             DateTime              @default(now())
+  verifiedAt           DateTime?
+  revokedAt            DateTime?
+  // A Phoenix referral was activated for this wallet. The referral code
+  // itself is deliberately not retained.
+  phoenixReferralActivatedAt DateTime?
+
+  positions Position[]
+  orders    Order[]
+  trades    Trade[]
+
+  @@unique([userId, exchange])
+  @@index([exchange])
+  @@index([walletAddress])
+}
+
+// ------------------------------------------------------------
+// Trading domain
+// ------------------------------------------------------------
+
+enum PositionSide {
+  LONG
+  SHORT
+}
+
+enum PositionStatus {
+  OPEN
+  CLOSED
+  LIQUIDATED
+}
+
+model Position {
+  id                Int             @id @default(autoincrement())
+  userId            Int
+  user              User            @relation(fields: [userId], references: [id])
+  exchangeAccountId Int
+  exchangeAccount   ExchangeAccount @relation(fields: [exchangeAccountId], references: [id])
+  exchange          String
+  market            String // e.g. "SOL-PERP"
+  side              PositionSide
+  status            PositionStatus  @default(OPEN)
+
+  entryPrice       Decimal @db.Decimal(20, 8)
+  size             Decimal @db.Decimal(20, 8)
+  leverage         Decimal @db.Decimal(6, 2)
+  margin           Decimal @db.Decimal(20, 8)
+  liquidationPrice Decimal? @db.Decimal(20, 8)
+
+  realizedPnl   Decimal @default(0) @db.Decimal(20, 8)
+  fundingPaid   Decimal @default(0) @db.Decimal(20, 8)
+
+  openedAt DateTime  @default(now())
+  closedAt DateTime?
+
+  orders Order[]
+  trades Trade[]
+
+  @@index([userId, status])
+  @@index([exchange, market])
+}
+
+enum OrderType {
+  MARKET
+  LIMIT
+  STOP_LOSS
+  TAKE_PROFIT
+}
+
+enum OrderSide {
+  BUY
+  SELL
+}
+
+enum OrderStatus {
+  PENDING
+  SUBMITTED
+  FILLED
+  PARTIALLY_FILLED
+  CANCELLED
+  REJECTED
+  FAILED
+}
+
+model Order {
+  id                Int             @id @default(autoincrement())
+  userId            Int
+  user              User            @relation(fields: [userId], references: [id])
+  exchangeAccountId Int
+  exchangeAccount   ExchangeAccount @relation(fields: [exchangeAccountId], references: [id])
+  positionId        Int?
+  position          Position?       @relation(fields: [positionId], references: [id])
+
+  exchange    String
+  market      String
+  type        OrderType
+  side        OrderSide
+  status      OrderStatus @default(PENDING)
+  size        Decimal     @db.Decimal(20, 8)
+  price       Decimal?    @db.Decimal(20, 8) // null for market orders
+  triggerPrice Decimal?   @db.Decimal(20, 8) // for SL/TP
+  leverage    Decimal     @db.Decimal(6, 2)
+  slippageBps Int
+
+  exchangeOrderId String?
+  txSignature     String?
+  errorMessage    String?
+
+  // Idempotency key supplied by the client (Telegram update id / callback
+  // id) - prevents double-submission on retries or duplicate webhooks.
+  idempotencyKey String @unique
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  filledAt  DateTime?
+
+  trades Trade[]
+
+  @@index([userId, status])
+  @@index([exchange, market])
+}
+
+model Trade {
+  id                Int             @id @default(autoincrement())
+  userId            Int
+  user              User            @relation(fields: [userId], references: [id])
+  exchangeAccountId Int
+  exchangeAccount   ExchangeAccount @relation(fields: [exchangeAccountId], references: [id])
+  orderId           Int?
+  order             Order?          @relation(fields: [orderId], references: [id])
+  positionId        Int?
+  position          Position?       @relation(fields: [positionId], references: [id])
+
+  exchange    String
+  market      String
+  side        OrderSide
+  price       Decimal @db.Decimal(20, 8)
+  size        Decimal @db.Decimal(20, 8)
+  feePaid     Decimal @default(0) @db.Decimal(20, 8)
+  realizedPnl Decimal @default(0) @db.Decimal(20, 8)
+
+  txSignature String?
+  executedAt  DateTime @default(now())
+
+  @@index([userId])
+  @@index([exchange, market])
+}
+
+// ------------------------------------------------------------
+// Referrals
+// ------------------------------------------------------------
+
+model ReferralStats {
+  id               Int      @id @default(autoincrement())
+  userId           Int      @unique
+  user             User     @relation(fields: [userId], references: [id])
+  totalReferrals   Int      @default(0)
+  totalVolumeUsd   Decimal  @default(0) @db.Decimal(20, 8)
+  totalRewardsUsd  Decimal  @default(0) @db.Decimal(20, 8)
+  updatedAt        DateTime @updatedAt
+}
+
+enum ReferralRewardStatus {
+  PENDING
+  CREDITED
+  PAID
+}
+
+model ReferralReward {
+  id             Int                   @id @default(autoincrement())
+  referrerId     Int
+  referredUserId Int
+  tradeId        Int?
+  amountUsd      Decimal               @db.Decimal(20, 8)
+  status         ReferralRewardStatus  @default(PENDING)
+  createdAt      DateTime              @default(now())
+  creditedAt     DateTime?
+  paidAt         DateTime?
+
+  @@index([referrerId, status])
+}
+
+// ------------------------------------------------------------
+// Settings
+// ------------------------------------------------------------
+
+model UserSettings {
+  id                Int     @id @default(autoincrement())
+  userId            Int     @unique
+  user              User    @relation(fields: [userId], references: [id])
+  defaultLeverage   Decimal @default(5) @db.Decimal(6, 2)
+  defaultSlippageBps Int    @default(50)
+  defaultOrderType  OrderType @default(MARKET)
+  language          String  @default("en")
+  timezone          String  @default("UTC")
+  notificationsOn   Boolean @default(true)
+  preferredExchange String  @default("phoenix")
+  maxLeverage       Decimal @default(20) @db.Decimal(6, 2)
+  updatedAt         DateTime @updatedAt
+}
+
+// ------------------------------------------------------------
+// Notifications
+// ------------------------------------------------------------
+
+enum NotificationType {
+  TRADE_FILLED
+  TRADE_FAILED
+  TAKE_PROFIT
+  STOP_LOSS
+  LIQUIDATION_WARNING
+  REFERRAL_REWARD
+  MAINTENANCE_ANNOUNCEMENT
+}
+
+model Notification {
+  id        Int              @id @default(autoincrement())
+  userId    Int
+  user      User             @relation(fields: [userId], references: [id])
+  type      NotificationType
+  message   String
+  metadata  String? // JSON-encoded extra context
+  deliveredAt DateTime?
+  createdAt DateTime         @default(now())
+
+  @@index([userId])
+  @@index([type])
+}
+
+// ------------------------------------------------------------
+// Admin & system state
+// ------------------------------------------------------------
+
+enum TradingMode {
+  NORMAL
+  READ_ONLY
+  MAINTENANCE
+  EMERGENCY_STOP
+}
+
+// Single-row table holding the platform-wide operating mode.
+model SystemState {
+  id          Int         @id @default(autoincrement())
+  mode        TradingMode @default(NORMAL)
+  // Owner-controlled onboarding gate. It applies only to new Phoenix
+  // onboarding; Phoenix registration remains a user-funded on-chain step.
+  requirePhoenixReferralCode Boolean @default(true)
+  reason      String?
+  changedBy   Int?
+  updatedAt   DateTime    @updatedAt
+}
+
+model AdminAuditLog {
+  id        Int      @id @default(autoincrement())
+  adminId   Int
+  admin     User     @relation("AdminActor", fields: [adminId], references: [id])
+  action    String
+  details   String? // JSON-encoded
+  createdAt DateTime @default(now())
+
+  @@index([adminId])
+  @@index([action])
+}
+
+// ------------------------------------------------------------
+// Structured log trail (mirrors file logger; queryable from admin panel)
+// ------------------------------------------------------------
+
+enum LogLevel {
+  INFO
+  WARN
+  ERROR
+}
+
+enum LogCategory {
+  API
+  TRADE
+  ORDER
+  POSITION
+  AUTH
+  REFERRAL
+  ADMIN
+  SYSTEM
+  PERFORMANCE
+}
+
+model LogEntry {
+  id        Int         @id @default(autoincrement())
+  level     LogLevel
+  category  LogCategory
+  message   String
+  metadata  String?
+  latencyMs Int?
+  createdAt DateTime    @default(now())
+
+  @@index([category])
+  @@index([level])
+  @@index([createdAt])
+}
