@@ -50,8 +50,30 @@ export class ExchangeAccountService {
   async linkImportedWallet(userId: number, exchange: string, privateKeyBase58: string): Promise<ExchangeAccount> {
     const adapter = exchangeRegistry.get(exchange);
     const account = await this.getOrCreatePendingAccount(userId, exchange);
-    const walletAddress = await walletKeyService.storeSigningKey(account.id, privateKeyBase58);
-    const updated = await this.authenticateAndSave(account, walletAddress, adapter.wallet.linkAccount.bind(adapter.wallet));
+    // Retain the previous encrypted material until the replacement wallet has
+    // authenticated successfully. A failed import must not strand the user
+    // without the key/session for their current wallet.
+    const previous = {
+      walletAddress: account.walletAddress,
+      encryptedPrivateKey: account.encryptedPrivateKey,
+      privateKeyIv: account.privateKeyIv,
+      privateKeyAuthTag: account.privateKeyAuthTag,
+      encryptedCredential: account.encryptedCredential,
+      credentialIv: account.credentialIv,
+      credentialAuthTag: account.credentialAuthTag,
+      status: account.status,
+      verifiedAt: account.verifiedAt,
+    };
+
+    let walletAddress: string;
+    let updated: ExchangeAccount;
+    try {
+      walletAddress = await walletKeyService.storeSigningKey(account.id, privateKeyBase58);
+      updated = await this.authenticateAndSave(account, walletAddress, adapter.wallet.linkAccount.bind(adapter.wallet));
+    } catch (error) {
+      await prisma.exchangeAccount.update({ where: { id: account.id }, data: previous });
+      throw error;
+    }
 
     await log.info('AUTH', 'Imported and linked exchange wallet', {
       userId,
@@ -128,9 +150,8 @@ export class ExchangeAccountService {
   private async getOrCreatePendingAccount(userId: number, exchange: string): Promise<ExchangeAccount> {
     const existing = await this.getActiveAccount(userId, exchange);
     if (existing) {
-      if (existing.status === 'VERIFIED') {
-        throw new Error(`A verified ${exchange} account is already linked. Use /link only to add a different exchange.`);
-      }
+      // There is one wallet per exchange. Link/import intentionally replaces
+      // it, after the new wallet has authenticated successfully.
       return existing;
     }
     return prisma.exchangeAccount.create({

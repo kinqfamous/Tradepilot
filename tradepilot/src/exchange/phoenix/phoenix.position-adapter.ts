@@ -2,39 +2,37 @@ import { PositionAdapter } from '../interfaces/position-adapter.interface';
 import { ExchangeCredential, ExchangePosition, PositionSide } from '../../types/exchange.types';
 import { PhoenixRestClient, PHOENIX_ENDPOINTS } from './phoenix.rest-client';
 
-interface PhoenixPositionResponse {
-  positionId: string;
-  market: string;
-  side: 'long' | 'short';
-  entryPrice: string;
-  markPrice: string;
-  size: string;
-  leverage: string;
-  margin: string;
-  liquidationPrice: string | null;
-  unrealizedPnl: string;
-  roe: string;
-  fundingPaid: string;
+interface PhoenixTraderStateResponse {
+  snapshot: {
+    subaccounts: Array<{
+      collateral: string;
+      positions: Array<{
+        positionSequenceNumber: string;
+        symbol: string;
+        basePositionUnits?: string;
+        basePositionLots: string;
+        entryPriceUsd?: string;
+        accumulatedFundingQuoteLots: string;
+      }>;
+    }>;
+  };
 }
 
-interface PhoenixPositionsResponse {
-  positions: PhoenixPositionResponse[];
-}
-
-function toExchangePosition(p: PhoenixPositionResponse): ExchangePosition {
+function toExchangePosition(p: PhoenixTraderStateResponse['snapshot']['subaccounts'][number]['positions'][number], collateral: number): ExchangePosition {
+  const size = Number(p.basePositionUnits ?? p.basePositionLots);
   return {
-    externalId: p.positionId,
-    market: p.market,
-    side: (p.side === 'long' ? 'LONG' : 'SHORT') as PositionSide,
-    entryPrice: Number(p.entryPrice),
-    markPrice: Number(p.markPrice),
-    size: Number(p.size),
-    leverage: Number(p.leverage),
-    margin: Number(p.margin),
-    liquidationPrice: p.liquidationPrice ? Number(p.liquidationPrice) : null,
-    unrealizedPnl: Number(p.unrealizedPnl),
-    roePercent: Number(p.roe),
-    fundingPaid: Number(p.fundingPaid),
+    externalId: p.positionSequenceNumber,
+    market: p.symbol,
+    side: (size >= 0 ? 'LONG' : 'SHORT') as PositionSide,
+    entryPrice: Number(p.entryPriceUsd ?? 0),
+    markPrice: 0,
+    size: Math.abs(size),
+    leverage: 0,
+    margin: collateral,
+    liquidationPrice: null,
+    unrealizedPnl: 0,
+    roePercent: 0,
+    fundingPaid: Number(p.accumulatedFundingQuoteLots),
   };
 }
 
@@ -42,11 +40,12 @@ export class PhoenixPositionAdapter implements PositionAdapter {
   constructor(private readonly client: PhoenixRestClient) {}
 
   async getOpenPositions(credential: ExchangeCredential): Promise<ExchangePosition[]> {
-    const response = await this.client.get<PhoenixPositionsResponse>(
-      PHOENIX_ENDPOINTS.traderPositions(credential.walletAddress),
-      credential.sessionSecret,
+    const response = await this.client.get<PhoenixTraderStateResponse>(PHOENIX_ENDPOINTS.traderState(credential.walletAddress));
+    return response.snapshot.subaccounts.flatMap((account) =>
+      account.positions
+        .filter((position) => Number(position.basePositionUnits ?? position.basePositionLots) !== 0)
+        .map((position) => toExchangePosition(position, Number(account.collateral))),
     );
-    return response.positions.map(toExchangePosition);
   }
 
   async getPosition(credential: ExchangeCredential, market: string): Promise<ExchangePosition | null> {

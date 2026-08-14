@@ -59,6 +59,8 @@ export const settingsMenuKeyboard = Markup.inlineKeyboard([
   [Markup.button.callback('🕒 Timezone', 'settings_timezone')],
   [Markup.button.callback('🔔 Toggle Notifications', 'settings_notifications')],
   [Markup.button.callback('🛡️ Max Leverage Cap', 'settings_max_leverage')],
+  [Markup.button.callback('📥 Import/Replace Wallet', 'settings_import_wallet')],
+  [Markup.button.callback('📤 Export Private Key', 'settings_export_wallet')],
 ]);
 
 export function adminMenuKeyboard(phoenixReferralCodeRequired: boolean) {

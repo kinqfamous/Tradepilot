@@ -3,28 +3,24 @@ import { config } from '../../config/env';
 import { withRetry } from '../../utils/retry';
 
 /**
- * Endpoint paths below follow Phoenix's documented category structure
- * (Auth / Exchange / Invite / Trader) at https://docs.phoenix.trade/api
- * under the verified base URL https://perp-api.phoenix.trade. Phoenix's
- * public reference page describes these categories but this integration
- * was built without pulling every exact route/payload from their full
- * REST reference table - confirm each path below against
- * https://docs.phoenix.trade/api-reference before routing real funds
- * through this adapter. Nothing here is a stub: every method is fully
- * implemented and will run against whatever path you configure.
+ * Keep these paths in sync with the version of @ellipsis-labs/rise shipped
+ * with this app.  The older `/v1/exchange/markets` and
+ * `/v1/trader/:wallet/balances` paths do not exist on the Phoenix API and
+ * therefore made every read action fail with a 404 after onboarding.
  */
 export const PHOENIX_ENDPOINTS = {
   authNonce: '/v1/auth/nonce',
   authWalletLogin: '/v1/auth/login/wallet',
-  exchangeInfo: '/v1/exchange',
-  markets: '/v1/exchange/markets',
-  market: (symbol: string) => `/v1/exchange/markets/${symbol}`,
-  orderBook: (symbol: string) => `/v1/exchange/markets/${symbol}/orderbook`,
-  traderState: (wallet: string) => `/v1/trader/${wallet}/state`,
-  traderPositions: (wallet: string) => `/v1/trader/${wallet}/positions`,
-  traderOrders: (wallet: string) => `/v1/trader/${wallet}/orders`,
-  traderBalances: (wallet: string) => `/v1/trader/${wallet}/balances`,
-  traderHistory: (wallet: string) => `/v1/trader/${wallet}/history`,
+  exchangeInfo: '/v1/view/exchange',
+  markets: '/v1/view/exchange/markets',
+  market: (symbol: string) => `/v1/view/exchange/market/${encodeURIComponent(symbol)}`,
+  marketStats: (symbol: string) => `/v1/market/${encodeURIComponent(symbol)}/stats/latest`,
+  marketsStats: '/v1/markets/stats/latest',
+  orderBook: (symbol: string) => `/v1/view/orderbook/${encodeURIComponent(symbol)}`,
+  traderState: (wallet: string) => `/v1/trader/state/${encodeURIComponent(wallet)}`,
+  traderView: (trader: string) => `/v1/view/trader/${encodeURIComponent(trader)}`,
+  traderOrders: (wallet: string) => `/v1/trader/${encodeURIComponent(wallet)}/order-history`,
+  traderHistory: (wallet: string) => `/v1/trader/${encodeURIComponent(wallet)}/trades-history`,
   buildOrderTx: '/v1/trader/tx/order',
   buildCancelTx: '/v1/trader/tx/cancel',
   buildClosePositionTx: '/v1/trader/tx/close-position',

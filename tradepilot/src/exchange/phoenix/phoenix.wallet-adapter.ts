@@ -19,8 +19,10 @@ interface PhoenixWalletLoginResponse {
   token_type: string;
 }
 
-interface PhoenixBalanceResponse {
-  balances: Array<{ asset: string; total: string; available: string; usedMargin: string }>;
+interface PhoenixTraderStateResponse {
+  snapshot: {
+    subaccounts: Array<{ collateral: string }>;
+  };
 }
 
 export class PhoenixWalletAdapter implements WalletAdapter {
@@ -48,17 +50,12 @@ export class PhoenixWalletAdapter implements WalletAdapter {
   }
 
   async getBalances(credential: ExchangeCredential): Promise<AccountBalance[]> {
-    const response = await this.client.get<PhoenixBalanceResponse>(
-      PHOENIX_ENDPOINTS.traderBalances(credential.walletAddress),
-      credential.sessionSecret,
-    );
+    const response = await this.client.get<PhoenixTraderStateResponse>(PHOENIX_ENDPOINTS.traderState(credential.walletAddress));
+    const total = response.snapshot.subaccounts.reduce((sum, account) => sum + Number(account.collateral), 0);
 
-    return response.balances.map((b) => ({
-      asset: b.asset,
-      total: Number(b.total),
-      available: Number(b.available),
-      usedMargin: Number(b.usedMargin),
-    }));
+    // Phoenix's trader-state endpoint reports collateral rather than a
+    // per-token wallet ledger. It is the balance available to the perp account.
+    return total === 0 ? [] : [{ asset: 'USDC', total, available: total, usedMargin: 0 }];
   }
 
   async registerAccount(walletAddress: string, feePayer: Keypair) {

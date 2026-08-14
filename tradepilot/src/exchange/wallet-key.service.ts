@@ -62,6 +62,24 @@ export class WalletKeyService {
     return Keypair.fromSecretKey(bs58.decode(privateKeyBase58));
   }
 
+  /**
+   * Returns the original base58 secret only for an explicit user-requested
+   * export. Callers must never log or persist this value outside the existing
+   * encrypted ExchangeAccount fields.
+   */
+  async exportSigningKey(exchangeAccountId: number): Promise<string> {
+    const account = await prisma.exchangeAccount.findUnique({ where: { id: exchangeAccountId } });
+    if (!account || !account.encryptedPrivateKey || !account.privateKeyIv || !account.privateKeyAuthTag) {
+      throw new Error('This wallet does not have an exportable private key.');
+    }
+
+    return decrypt({
+      ciphertext: account.encryptedPrivateKey,
+      iv: account.privateKeyIv,
+      authTag: account.privateKeyAuthTag,
+    });
+  }
+
   /** Signs an arbitrary wallet-login message and returns the Phoenix-required base58 signature. */
   async signMessage(exchangeAccountId: number, message: Uint8Array): Promise<string> {
     const keypair = await this.getKeypair(exchangeAccountId);

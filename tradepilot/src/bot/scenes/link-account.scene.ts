@@ -41,6 +41,10 @@ export const linkAccountScene = new Scenes.WizardScene<BotContext>(
     }
 
     if (data === 'link_import') {
+      if (ctx.chat?.type !== 'private') {
+        await ctx.reply('For your security, wallet import is only available in a private chat with this bot.');
+        return ctx.scene.leave();
+      }
       state(ctx).method = 'import';
       await ctx.reply('📥 Send the base58 private key of the wallet to import, or /cancel.');
       return ctx.wizard.next();

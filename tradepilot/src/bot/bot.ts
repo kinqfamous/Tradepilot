@@ -30,6 +30,10 @@ import {
   handleSettingsTimezone,
   handleSettingsMaxLeverage,
   handleSettingsNotifications,
+  handleSettingsImportWallet,
+  handleSettingsExportWallet,
+  handleSettingsExportWalletConfirm,
+  handleSettingsExportWalletCancel,
 } from './commands/settings.command';
 import { historyCommand } from './commands/history.command';
 import {
@@ -137,7 +141,10 @@ export function createBot(): Telegraf<BotContext> {
   bot.action('settings_timezone', handleSettingsTimezone);
   bot.action('settings_max_leverage', handleSettingsMaxLeverage);
   bot.action('settings_notifications', handleSettingsNotifications);
-
+  bot.action('settings_import_wallet', handleSettingsImportWallet);
+  bot.action('settings_export_wallet', handleSettingsExportWallet);
+  bot.action('settings_export_wallet_confirm', handleSettingsExportWalletConfirm);
+  bot.action('settings_export_wallet_cancel', handleSettingsExportWalletCancel);
   bot.action('admin_stats', adminOnly, handleAdminStats);
   bot.action('admin_broadcast', adminOnly, handleAdminBroadcast);
   bot.action('admin_mode_normal', adminOnly, handleAdminModeNormal);
