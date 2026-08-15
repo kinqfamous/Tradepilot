@@ -1,13 +1,14 @@
 import { prisma } from '../database/prisma';
-import { UserSettings, OrderType } from '@prisma/client';
+import { UserSettings, OrderType, Prisma } from '@prisma/client';
 import { MAX_LEVERAGE_HARD_CAP, MIN_LEVERAGE } from '../constants';
 import { log } from '../logger/logger';
 
 export class SettingsService {
-  async get(userId: number): Promise<UserSettings> {
+  async get(userId: number): Promise<UserSettings & { defaultCollateralUsd: Prisma.Decimal }> {
     const existing = await prisma.userSettings.findUnique({ where: { userId } });
-    if (existing) return existing;
-    return prisma.userSettings.create({ data: { userId } });
+    if (existing) return existing as UserSettings & { defaultCollateralUsd: Prisma.Decimal };
+    const created = await prisma.userSettings.create({ data: { userId } });
+    return created as UserSettings & { defaultCollateralUsd: Prisma.Decimal };
   }
 
   async setDefaultLeverage(userId: number, leverage: number): Promise<UserSettings> {
@@ -55,6 +56,19 @@ export class SettingsService {
       throw new Error(`Max leverage must be between ${MIN_LEVERAGE}x and ${MAX_LEVERAGE_HARD_CAP}x.`);
     }
     return prisma.userSettings.update({ where: { userId }, data: { maxLeverage } });
+  }
+
+  async setDefaultCollateralUsd(userId: number, amountUsd: number): Promise<UserSettings & { defaultCollateralUsd: Prisma.Decimal }> {
+    if (!Number.isFinite(amountUsd) || amountUsd <= 0) {
+      throw new Error('Default collateral must be a positive USD amount.');
+    }
+    const updated = await prisma.userSettings.update({
+      where: { userId },
+      // Cast keeps this branch buildable until the local Prisma client is regenerated after migration.
+      data: { defaultCollateralUsd: amountUsd } as any,
+    });
+    await log.info('SYSTEM', 'Updated default group-trade collateral', { userId, amountUsd });
+    return updated as UserSettings & { defaultCollateralUsd: Prisma.Decimal };
   }
 }
 

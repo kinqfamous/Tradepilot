@@ -6,11 +6,26 @@ import { userRepository } from '../../users/user.repository';
 import { exchangeAccountService } from '../../users/exchange-account.service';
 import { phoenixReferralService } from '../../exchange/phoenix/phoenix-referral.service';
 import { config } from '../../config/env';
-import { acceptTermsKeyboard, linkMethodKeyboard, phoenixRegistrationKeyboard } from '../keyboards';
+import { acceptTermsKeyboard, linkMethodKeyboard, mainMenuKeyboard, phoenixRegistrationKeyboard } from '../keyboards';
 import { isValidBase58PrivateKey } from '../../utils/format';
 
 function state(ctx: BotContext): OnboardingWizardState {
   return ctx.wizard.state as OnboardingWizardState;
+}
+
+async function finishOnboarding(ctx: BotContext): Promise<void> {
+  const pendingTrade = state(ctx).pendingTrade;
+  if (pendingTrade) {
+    await ctx.reply('✅ Setup complete — continuing your trade.');
+    await ctx.scene.enter(SCENE_IDS.TRADE, {
+      exchange: config.defaultExchange,
+      market: pendingTrade.market,
+      side: pendingTrade.side,
+    });
+    return;
+  }
+  await ctx.reply('✅ Setup complete.', mainMenuKeyboard);
+  await ctx.scene.leave();
 }
 
 async function promptForLinkMethod(ctx: BotContext): Promise<void> {
@@ -41,7 +56,8 @@ async function applyPhoenixReferralCode(ctx: BotContext): Promise<{ transactionS
 export const onboardingScene = new Scenes.WizardScene<BotContext>(
   SCENE_IDS.ONBOARDING,
   async (ctx) => {
-    (ctx.wizard.state as OnboardingWizardState) = {};
+    const preSeeded = ctx.wizard.state as OnboardingWizardState | undefined;
+    (ctx.wizard.state as OnboardingWizardState) = { ...preSeeded };
 
     // Existing users returning with a pending wallet have already accepted the
     // terms. Resume at the referral-code gate instead of showing registration.
@@ -124,7 +140,8 @@ export const onboardingScene = new Scenes.WizardScene<BotContext>(
             `Phoenix used your wallet for the normal registration rent and network fees.${activation?.transactionSignature ? `\nTransaction: \`${activation.transactionSignature}\`` : ''}`,
           { parse_mode: 'Markdown' },
         );
-        return ctx.scene.leave();
+        if (ctx.appUserId) await userService.completeOnboarding(ctx.appUserId);
+        return finishOnboarding(ctx);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         await ctx.reply(`❌ Phoenix referral activation failed: ${message}\n\nFix the issue, then resend the referral code or /cancel.`);
@@ -166,7 +183,8 @@ export const onboardingScene = new Scenes.WizardScene<BotContext>(
               : 'Fund the wallet with at least 0.04 SOL, then register it to enable trading.'}`,
           referralCodeWasRequired ? { parse_mode: 'Markdown' } : { parse_mode: 'Markdown', ...phoenixRegistrationKeyboard },
         );
-        return ctx.scene.leave();
+        await userService.completeOnboarding(ctx.appUserId);
+        return finishOnboarding(ctx);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         await ctx.reply(`❌ Failed to link wallet or activate the Phoenix referral: ${message}`);
@@ -224,8 +242,10 @@ export const onboardingScene = new Scenes.WizardScene<BotContext>(
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       await ctx.reply(`❌ Failed to link wallet: ${message}`);
+      return;
     }
 
-    return ctx.scene.leave();
+    await userService.completeOnboarding(ctx.appUserId);
+    return finishOnboarding(ctx);
   },
 );

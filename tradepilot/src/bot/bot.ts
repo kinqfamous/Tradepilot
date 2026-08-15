@@ -20,7 +20,6 @@ import { startCommand, helpCommand } from './commands/start.command';
 import { positionsCommand } from './commands/positions.command';
 import { balanceCommand } from './commands/balance.command';
 import { marketsCommand, handleMarketsPagination } from './commands/markets.command';
-import { referralCommand, handleReferralLeaderboard } from './commands/referral.command';
 import {
   settingsCommand,
   handleSettingsLeverage,
@@ -29,12 +28,12 @@ import {
   handleSettingsLanguage,
   handleSettingsTimezone,
   handleSettingsMaxLeverage,
+  handleSettingsDefaultCollateral,
   handleSettingsNotifications,
   handleSettingsImportWallet,
   handleSettingsExportWallet,
-  handleSettingsExportWalletConfirm,
-  handleSettingsExportWalletCancel,
 } from './commands/settings.command';
+import { registerGroupTradeHandlers } from './group-trade.handler';
 import { historyCommand } from './commands/history.command';
 import {
   adminCommand,
@@ -84,7 +83,6 @@ export function createBot(): Telegraf<BotContext> {
   bot.command('close', (ctx) => ctx.scene.enter(SCENE_IDS.CLOSE_POSITION));
   bot.command('balance', balanceCommand);
   bot.command('markets', marketsCommand);
-  bot.command('referral', referralCommand);
   bot.command('settings', settingsCommand);
   bot.command('history', historyCommand);
   bot.command('link', (ctx) => ctx.scene.enter(SCENE_IDS.LINK_ACCOUNT));
@@ -107,13 +105,11 @@ export function createBot(): Telegraf<BotContext> {
   bot.hears('📊 Positions', positionsCommand);
   bot.hears('💰 Balance', balanceCommand);
   bot.hears('🌐 Markets', marketsCommand);
-  bot.hears('🔗 Referral', referralCommand);
   bot.hears('⚙️ Settings', settingsCommand);
   bot.hears('📜 History', historyCommand);
 
   // Inline keyboard callback handlers
   bot.action(/^markets_page_\d+$/, handleMarketsPagination);
-  bot.action('referral_leaderboard', handleReferralLeaderboard);
   bot.action('phoenix_register', async (ctx) => {
     await ctx.answerCbQuery();
     if (!ctx.appUserId) return ctx.reply('Please send /start first.');
@@ -140,11 +136,10 @@ export function createBot(): Telegraf<BotContext> {
   bot.action('settings_language', handleSettingsLanguage);
   bot.action('settings_timezone', handleSettingsTimezone);
   bot.action('settings_max_leverage', handleSettingsMaxLeverage);
+  bot.action('settings_default_collateral', handleSettingsDefaultCollateral);
   bot.action('settings_notifications', handleSettingsNotifications);
   bot.action('settings_import_wallet', handleSettingsImportWallet);
   bot.action('settings_export_wallet', handleSettingsExportWallet);
-  bot.action('settings_export_wallet_confirm', handleSettingsExportWalletConfirm);
-  bot.action('settings_export_wallet_cancel', handleSettingsExportWalletCancel);
   bot.action('admin_stats', adminOnly, handleAdminStats);
   bot.action('admin_broadcast', adminOnly, handleAdminBroadcast);
   bot.action('admin_mode_normal', adminOnly, handleAdminModeNormal);
@@ -152,6 +147,8 @@ export function createBot(): Telegraf<BotContext> {
   bot.action('admin_mode_maintenance', adminOnly, handleAdminModeMaintenance);
   bot.action('admin_mode_emergency', adminOnly, handleAdminModeEmergency);
   bot.action('admin_toggle_phoenix_referral_gate', adminOnly, handleAdminTogglePhoenixReferralGate);
+
+  registerGroupTradeHandlers(bot);
 
   bot.catch((err, ctx) => {
     const message = err instanceof Error ? err.message : String(err);

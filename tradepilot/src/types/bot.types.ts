@@ -4,6 +4,7 @@ export interface OnboardingWizardState {
   acceptedTerms?: boolean;
   phoenixReferralCode?: string;
   linkMethod?: 'generate' | 'import';
+  pendingTrade?: { market: string; side: 'LONG' | 'SHORT' };
 }
 
 export interface LinkAccountWizardState {
@@ -31,7 +32,7 @@ export interface ClosePositionWizardState {
 }
 
 export interface SettingsWizardState {
-  field?: 'leverage' | 'slippage' | 'orderType' | 'language' | 'timezone' | 'maxLeverage';
+  field?: 'leverage' | 'slippage' | 'orderType' | 'language' | 'timezone' | 'maxLeverage' | 'defaultCollateral';
 }
 
 export interface BroadcastWizardState {

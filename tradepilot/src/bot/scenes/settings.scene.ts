@@ -15,6 +15,7 @@ export const settingsScene = new Scenes.WizardScene<BotContext>(
       language: 'Enter your language code (e.g. en, es, fr):',
       timezone: 'Enter your timezone (e.g. UTC, America/New_York):',
       maxLeverage: 'Enter your new max leverage cap (e.g. 20):',
+      defaultCollateral: 'Enter your default group-trade collateral in USD (e.g. 50):',
     };
 
     if (!field || !prompts[field]) {
@@ -64,6 +65,9 @@ export const settingsScene = new Scenes.WizardScene<BotContext>(
       } else if (field === 'maxLeverage') {
         const updated = await settingsService.setMaxLeverage(userId, Number(raw));
         await ctx.reply(`✅ Max leverage cap set to ${updated.maxLeverage}x.`, mainMenuKeyboard);
+      } else if (field === 'defaultCollateral') {
+        const updated = await settingsService.setDefaultCollateralUsd(userId, Number(raw));
+        await ctx.reply(`✅ Default group-trade collateral set to $${updated.defaultCollateralUsd}.`, mainMenuKeyboard);
       } else {
         await ctx.reply('Unknown settings field.', mainMenuKeyboard);
       }

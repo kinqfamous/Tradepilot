@@ -293,6 +293,9 @@ model UserSettings {
   notificationsOn   Boolean @default(true)
   preferredExchange String  @default("phoenix")
   maxLeverage       Decimal @default(20) @db.Decimal(6, 2)
+  // Used for one-tap trades from a group chat (e.g. "@TradePilotBot long sol"),
+  // where there's no wizard step to ask for a collateral amount.
+  defaultCollateralUsd Decimal @default(50) @db.Decimal(20, 8)
   updatedAt         DateTime @updatedAt
 }
 

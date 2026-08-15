@@ -4,7 +4,7 @@ import { SCENE_IDS } from '../../constants';
 import { tradingService } from '../../trading/trading.service';
 import { settingsService } from '../../settings/settings.service';
 import { marketQueryService } from '../../trading/market-query.service';
-import { normalizeMarketSymbol } from '../../utils/format';
+import { formatNumber, parseTickerInput } from '../../utils/format';
 import { confirmCancelKeyboard, mainMenuKeyboard, orderTypeKeyboard, sideKeyboard, skipKeyboard } from '../keyboards';
 import { config } from '../../config/env';
 import { parseOrError, usdAmountSchema, leverageSchema, priceSchema } from '../../validators/trade.validators';
@@ -13,18 +13,28 @@ function state(ctx: BotContext): TradeWizardState {
   return ctx.wizard.state as TradeWizardState;
 }
 
+// Step map: 0 entry; 1 ticker input and market resolution; 2 side selection;
+// 3 collateral; 4 leverage; 5 order type; 6 limit price; 7 stop loss;
+// 8 take profit; 9 confirmation and execution.
 export const tradeScene = new Scenes.WizardScene<BotContext>(
   SCENE_IDS.TRADE,
-  // Step 0: entry -> ask market
+  // Step 0: entry -> ask for a ticker (+ optional side)
   async (ctx) => {
-    (ctx.wizard.state as TradeWizardState) = { exchange: config.defaultExchange };
-    await ctx.reply('📈 *New Trade*\n\nWhich market? (e.g. `SOL-PERP`)', { parse_mode: 'Markdown' });
+    const preSeeded = ctx.wizard.state as TradeWizardState | undefined;
+    (ctx.wizard.state as TradeWizardState) = { exchange: config.defaultExchange, ...preSeeded };
+    if (state(ctx).market && state(ctx).side) {
+      await ctx.reply(`*${state(ctx).side} ${state(ctx).market}* — how much collateral (USD) do you want to put in?`, {
+        parse_mode: 'Markdown',
+      });
+      return ctx.wizard.selectStep(3);
+    }
+    await ctx.reply('📈 *New Trade*\n\nWhich ticker? (e.g. `SOL` or `SOL long`)', { parse_mode: 'Markdown' });
     return ctx.wizard.next();
   },
-  // Step 1: market
+  // Step 1: parse ticker input -> resolve market -> step 2 or jump to step 3
   async (ctx) => {
     if (!ctx.message || !('text' in ctx.message)) {
-      await ctx.reply('Please send a market symbol as text, or /cancel.');
+      await ctx.reply('Please send a ticker as text, or /cancel.');
       return;
     }
     if (ctx.message.text.trim() === '/cancel') {
@@ -32,19 +42,35 @@ export const tradeScene = new Scenes.WizardScene<BotContext>(
       return ctx.scene.leave();
     }
 
-    const symbol = normalizeMarketSymbol(ctx.message.text);
-    // Wizard state can be cleared by a bot restart between the prompt and the
-    // user's reply. Phoenix is the configured default in that case.
-    const markets = await marketQueryService.listMarkets(state(ctx).exchange ?? config.defaultExchange);
-    const market = markets.find((m) => m.symbol === symbol);
-
-    if (!market) {
-      await ctx.reply(`Unknown market "${symbol}". Check /markets for the full list, or /cancel.`);
+    const parsed = parseTickerInput(ctx.message.text);
+    if (!parsed) {
+      await ctx.reply("That doesn't look like a ticker. Try `SOL` or `SOL long`.", { parse_mode: 'Markdown' });
       return;
     }
 
-    state(ctx).market = symbol;
-    await ctx.reply(`Long or short *${symbol}*?`, { parse_mode: 'Markdown', ...sideKeyboard });
+    // Wizard state can be cleared by a bot restart between the prompt and the
+    // user's reply. Phoenix is the configured default in that case.
+    const market = await marketQueryService.resolveTicker(state(ctx).exchange ?? config.defaultExchange, parsed.rawTicker);
+
+    if (!market) {
+      await ctx.reply(`Unknown ticker "${parsed.rawTicker}". Check /markets for valid symbols, or /cancel.`);
+      return;
+    }
+
+    state(ctx).market = market.symbol;
+    if (parsed.side) {
+      state(ctx).side = parsed.side;
+      const side = parsed.side === 'LONG' ? '🟢 Long' : '🔴 Short';
+      await ctx.reply(`${side} *${market.symbol}* — how much collateral (USD) do you want to put in?`, {
+        parse_mode: 'Markdown',
+      });
+      return ctx.wizard.selectStep(3);
+    }
+
+    await ctx.reply(
+      `Long or short *${market.symbol}*?\nCurrent mark price: *$${formatNumber(market.markPrice)}*`,
+      { parse_mode: 'Markdown', ...sideKeyboard },
+    );
     return ctx.wizard.next();
   },
   // Step 2: side

@@ -3,7 +3,7 @@ import { Markup } from 'telegraf';
 export const mainMenuKeyboard = Markup.keyboard([
   ['📈 Trade', '📊 Positions'],
   ['💰 Balance', '🌐 Markets'],
-  ['🔗 Referral', '⚙️ Settings'],
+  ['⚙️ Settings'],
   ['📜 History'],
 ]).resize();
 
@@ -59,24 +59,25 @@ export const settingsMenuKeyboard = Markup.inlineKeyboard([
   [Markup.button.callback('🕒 Timezone', 'settings_timezone')],
   [Markup.button.callback('🔔 Toggle Notifications', 'settings_notifications')],
   [Markup.button.callback('🛡️ Max Leverage Cap', 'settings_max_leverage')],
-  [Markup.button.callback('📥 Import/Replace Wallet', 'settings_import_wallet')],
+  [Markup.button.callback('💵 Default Group-Trade Amount', 'settings_default_collateral')],
+  [Markup.button.callback('📥 Import Wallet', 'settings_import_wallet')],
   [Markup.button.callback('📤 Export Private Key', 'settings_export_wallet')],
 ]);
 
 export function adminMenuKeyboard(phoenixReferralCodeRequired: boolean) {
   return Markup.inlineKeyboard([
-  [Markup.button.callback('📊 Stats', 'admin_stats')],
-  [Markup.button.callback('📢 Broadcast', 'admin_broadcast')],
-  [
-    Markup.button.callback(
-      `🔐 Phoenix referral-code gate: ${phoenixReferralCodeRequired ? 'ON' : 'OFF'}`,
-      'admin_toggle_phoenix_referral_gate',
-    ),
-  ],
-  [Markup.button.callback('🟢 Normal Mode', 'admin_mode_normal')],
-  [Markup.button.callback('👁️ Read-Only Mode', 'admin_mode_readonly')],
-  [Markup.button.callback('🛠️ Maintenance Mode', 'admin_mode_maintenance')],
-  [Markup.button.callback('🛑 Emergency Stop', 'admin_mode_emergency')],
+    [Markup.button.callback('📊 Stats', 'admin_stats')],
+    [Markup.button.callback('📢 Broadcast', 'admin_broadcast')],
+    [
+      Markup.button.callback(
+        `🔐 Phoenix referral-code gate: ${phoenixReferralCodeRequired ? 'ON' : 'OFF'}`,
+        'admin_toggle_phoenix_referral_gate',
+      ),
+    ],
+    [Markup.button.callback('🟢 Normal Mode', 'admin_mode_normal')],
+    [Markup.button.callback('👁️ Read-Only Mode', 'admin_mode_readonly')],
+    [Markup.button.callback('🛠️ Maintenance Mode', 'admin_mode_maintenance')],
+    [Markup.button.callback('🛑 Emergency Stop', 'admin_mode_emergency')],
   ]);
 }
 
