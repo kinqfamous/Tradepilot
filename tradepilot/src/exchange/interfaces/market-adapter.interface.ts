@@ -5,7 +5,7 @@ import { MarketInfo, OrderBookSnapshot } from '../../types/exchange.types';
  * where the exchange allows it (market metadata changes rarely; prices do not).
  */
 export interface MarketAdapter {
-  listMarkets(): Promise<MarketInfo[]>;
+  listMarkets(forceRefresh?: boolean): Promise<MarketInfo[]>;
   getMarket(symbol: string): Promise<MarketInfo | null>;
   getOrderBook(symbol: string, depth?: number): Promise<OrderBookSnapshot>;
 }

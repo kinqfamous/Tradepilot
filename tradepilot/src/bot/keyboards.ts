@@ -2,10 +2,24 @@ import { Markup } from 'telegraf';
 
 export const mainMenuKeyboard = Markup.keyboard([
   ['📈 Trade', '📊 Positions'],
-  ['💰 Balance', '🌐 Markets'],
+  ['💰 Balance', '➕ Fund Phoenix'],
+  ['💸 Withdraw'],
+  ['🌐 Markets'],
   ['⚙️ Settings'],
   ['📜 History'],
 ]).resize();
+
+export const withdrawalSourceKeyboard = Markup.inlineKeyboard([
+  [Markup.button.callback('🏦 Phoenix → My Wallet', 'withdraw_phoenix')],
+  [Markup.button.callback('👛 My Wallet → Any Address', 'withdraw_wallet')],
+  [Markup.button.callback('❌ Cancel', 'cancel')],
+]);
+
+export function dashboardKeyboard(userId: number) {
+  return Markup.inlineKeyboard([
+    [Markup.button.callback('🔄 Refresh', `dashboard_refresh_${userId}`)],
+  ]);
+}
 
 export const acceptTermsKeyboard = Markup.inlineKeyboard([
   Markup.button.callback('✅ I Accept the Terms', 'accept_terms'),

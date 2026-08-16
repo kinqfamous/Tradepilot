@@ -1,4 +1,4 @@
-import { AccountBalance, ExchangeCredential } from '../../types/exchange.types';
+import { AccountBalance, ExchangeCredential, WalletAccountBalances, WithdrawalResult } from '../../types/exchange.types';
 import type { Keypair } from '@solana/web3.js';
 
 export interface LinkAccountResult {
@@ -32,4 +32,12 @@ export interface WalletAdapter {
   registerAccount?(walletAddress: string, feePayer: Keypair): Promise<RegisterAccountResult>;
 
   getBalances(credential: ExchangeCredential): Promise<AccountBalance[]>;
+  /** Balances held in the user's Solana wallet, separate from exchange collateral. */
+  getWalletBalances?(credential: ExchangeCredential): Promise<WalletAccountBalances>;
+  /** Funds Phoenix USDC collateral directly from the linked wallet. */
+  depositFromLinkedWallet?(credential: ExchangeCredential, signer: Keypair, amount: number): Promise<WithdrawalResult>;
+  /** Moves USDC out of Phoenix. The destination is deliberately the linked wallet only. */
+  withdrawToLinkedWallet?(credential: ExchangeCredential, signer: Keypair, amount: number): Promise<WithdrawalResult>;
+  /** Sends USDC from the linked wallet to a user-confirmed Solana address. */
+  withdrawFromWallet?(credential: ExchangeCredential, signer: Keypair, destination: string, amount: number): Promise<WithdrawalResult>;
 }

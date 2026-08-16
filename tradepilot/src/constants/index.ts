@@ -5,6 +5,8 @@ export const SCENE_IDS = {
   CLOSE_POSITION: 'close-position-wizard',
   SETTINGS: 'settings-wizard',
   BROADCAST: 'broadcast-wizard',
+  WITHDRAW: 'withdraw-wizard',
+  FUND_PHOENIX: 'fund-phoenix-wizard',
 } as const;
 
 export const REFERRAL_REWARD_BPS = 10; // 0.10% of trade notional, credited to referrer

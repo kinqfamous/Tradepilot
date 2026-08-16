@@ -39,6 +39,16 @@ export interface BroadcastWizardState {
   message?: string;
 }
 
+export interface WithdrawWizardState {
+  source?: 'PHOENIX' | 'WALLET';
+  amount?: number;
+  destination?: string;
+}
+
+export interface FundPhoenixWizardState {
+  amount?: number;
+}
+
 export type BotSession = Scenes.WizardSession<Scenes.WizardSessionData>;
 
 export interface BotContext extends Context {

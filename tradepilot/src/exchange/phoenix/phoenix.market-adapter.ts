@@ -9,9 +9,17 @@ interface PhoenixMarketResponse {
   leverageTiers: Array<{ maxLeverage: number }>;
 }
 
-interface PhoenixMarkPriceResponse {
+interface PhoenixMarketStats {
   symbol: string;
-  markPrice: { price: number } | null;
+  mark_price: number;
+  oracle_price: number;
+  prev_day_mark_price: number;
+  open_interest: number;
+  current_funding_rate: number;
+}
+
+interface PhoenixMarketsStatsResponse {
+  markets: PhoenixMarketStats[];
 }
 
 interface PhoenixOrderBookResponse {
@@ -23,16 +31,19 @@ interface PhoenixOrderBookResponse {
 
 const MARKET_CACHE_TTL_MS = 30_000;
 
-function toMarketInfo(m: PhoenixMarketResponse, markPrice?: number): MarketInfo {
+function toMarketInfo(m: PhoenixMarketResponse, stats?: PhoenixMarketStats): MarketInfo {
   const [baseAsset = m.symbol, quoteAsset = 'USD'] = m.symbol.split('-');
+  const markPrice = stats?.mark_price ?? 0;
+  const previousMarkPrice = stats?.prev_day_mark_price ?? 0;
   return {
     symbol: m.symbol,
     baseAsset,
     quoteAsset,
-    markPrice: markPrice ?? 0,
-    indexPrice: markPrice ?? 0,
-    fundingRate: 0,
-    openInterest: 0,
+    markPrice,
+    indexPrice: stats?.oracle_price ?? markPrice,
+    priceChange24hPercent: previousMarkPrice > 0 ? ((markPrice - previousMarkPrice) / previousMarkPrice) * 100 : 0,
+    fundingRate: stats?.current_funding_rate ?? 0,
+    openInterest: stats?.open_interest ?? 0,
     maxLeverage: Math.max(...m.leverageTiers.map((tier) => tier.maxLeverage), 1),
     minOrderSize: 10 ** -m.baseLotsDecimals,
     tickSize: m.tickSize,
@@ -44,25 +55,29 @@ export class PhoenixMarketAdapter implements MarketAdapter {
 
   constructor(private readonly client: PhoenixRestClient) {}
 
-  async listMarkets(): Promise<MarketInfo[]> {
+  async listMarkets(forceRefresh = false): Promise<MarketInfo[]> {
     const now = Date.now();
-    if (this.cache && now - this.cache.fetchedAt < MARKET_CACHE_TTL_MS) {
+    if (!forceRefresh && this.cache && now - this.cache.fetchedAt < MARKET_CACHE_TTL_MS) {
       return this.cache.markets;
     }
 
-    const configs = await this.client.get<PhoenixMarketResponse[]>(PHOENIX_ENDPOINTS.markets);
-    const markets = configs.map((market) => toMarketInfo(market));
+    const [configs, { markets: stats }] = await Promise.all([
+      this.client.get<PhoenixMarketResponse[]>(PHOENIX_ENDPOINTS.markets),
+      this.client.get<PhoenixMarketsStatsResponse>(PHOENIX_ENDPOINTS.marketsStats),
+    ]);
+    const statsBySymbol = new Map(stats.map((market) => [market.symbol, market]));
+    const markets = configs.map((market) => toMarketInfo(market, statsBySymbol.get(market.symbol)));
     this.cache = { markets, fetchedAt: now };
     return markets;
   }
 
   async getMarket(symbol: string): Promise<MarketInfo | null> {
     try {
-      const [market, markPrice] = await Promise.all([
+      const [market, stats] = await Promise.all([
         this.client.get<PhoenixMarketResponse>(PHOENIX_ENDPOINTS.market(symbol)),
-        this.client.get<PhoenixMarkPriceResponse>(PHOENIX_ENDPOINTS.markPrice(symbol)),
+        this.client.get<PhoenixMarketStats>(PHOENIX_ENDPOINTS.marketStats(symbol)),
       ]);
-      return toMarketInfo(market, markPrice.markPrice?.price);
+      return toMarketInfo(market, stats);
     } catch {
       return null;
     }

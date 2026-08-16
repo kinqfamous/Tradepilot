@@ -15,8 +15,10 @@ import { tradeScene } from './scenes/trade.scene';
 import { closePositionScene } from './scenes/close-position.scene';
 import { settingsScene } from './scenes/settings.scene';
 import { broadcastScene } from './scenes/broadcast.scene';
+import { withdrawScene } from './scenes/withdraw.scene';
+import { fundPhoenixScene } from './scenes/fund-phoenix.scene';
 
-import { startCommand, helpCommand } from './commands/start.command';
+import { startCommand, helpCommand, refreshDashboard } from './commands/start.command';
 import { positionsCommand } from './commands/positions.command';
 import { balanceCommand } from './commands/balance.command';
 import { marketsCommand, handleMarketsPagination } from './commands/markets.command';
@@ -63,6 +65,8 @@ export function createBot(): Telegraf<BotContext> {
     closePositionScene,
     settingsScene,
     broadcastScene,
+    withdrawScene,
+    fundPhoenixScene,
   ]);
 
   // Order: error boundary wraps everything, then identity resolution,
@@ -82,6 +86,8 @@ export function createBot(): Telegraf<BotContext> {
   bot.command('positions', positionsCommand);
   bot.command('close', (ctx) => ctx.scene.enter(SCENE_IDS.CLOSE_POSITION));
   bot.command('balance', balanceCommand);
+  bot.command('withdraw', (ctx) => ctx.scene.enter(SCENE_IDS.WITHDRAW));
+  bot.command('fund', (ctx) => ctx.scene.enter(SCENE_IDS.FUND_PHOENIX));
   bot.command('markets', marketsCommand);
   bot.command('settings', settingsCommand);
   bot.command('history', historyCommand);
@@ -104,12 +110,15 @@ export function createBot(): Telegraf<BotContext> {
   bot.hears('📈 Trade', (ctx) => ctx.scene.enter(SCENE_IDS.TRADE));
   bot.hears('📊 Positions', positionsCommand);
   bot.hears('💰 Balance', balanceCommand);
+  bot.hears('💸 Withdraw', (ctx) => ctx.scene.enter(SCENE_IDS.WITHDRAW));
+  bot.hears('➕ Fund Phoenix', (ctx) => ctx.scene.enter(SCENE_IDS.FUND_PHOENIX));
   bot.hears('🌐 Markets', marketsCommand);
   bot.hears('⚙️ Settings', settingsCommand);
   bot.hears('📜 History', historyCommand);
 
   // Inline keyboard callback handlers
   bot.action(/^markets_page_\d+$/, handleMarketsPagination);
+  bot.action(/^dashboard_refresh_\d+$/, refreshDashboard);
   bot.action('phoenix_register', async (ctx) => {
     await ctx.answerCbQuery();
     if (!ctx.appUserId) return ctx.reply('Please send /start first.');

@@ -4,11 +4,13 @@ import { userRepository } from '../../users/user.repository';
 import { exchangeAccountService } from '../../users/exchange-account.service';
 import { config } from '../../config/env';
 import { SCENE_IDS } from '../../constants';
-import { mainMenuKeyboard, phoenixRegistrationKeyboard } from '../keyboards';
+import { dashboardKeyboard, phoenixRegistrationKeyboard } from '../keyboards';
 import { phoenixReferralService } from '../../exchange/phoenix/phoenix-referral.service';
 import { marketQueryService } from '../../trading/market-query.service';
-import { formatUsd } from '../../utils/format';
+import { formatUsd, shortenAddress } from '../../utils/format';
+import { MarketInfo } from '../../types/exchange.types';
 import { parseGroupTradeDeepLink } from '../group-trade.util';
+import { accountBalanceService } from '../../users/account-balance.service';
 
 export async function startCommand(ctx: BotContext): Promise<void> {
   const fromId = ctx.from?.id;
@@ -66,45 +68,98 @@ export async function startCommand(ctx: BotContext): Promise<void> {
     return;
   }
 
-  const [balancesResult, positionsResult] = await Promise.allSettled([
-    marketQueryService.getBalances(user.id, config.defaultExchange),
-    marketQueryService.getOpenPositions(user.id, config.defaultExchange),
+  await ctx.reply(await buildDashboard(user.id, exchangeAccount.walletAddress), {
+    parse_mode: 'Markdown',
+    ...dashboardKeyboard(user.id),
+  });
+}
+
+export async function refreshDashboard(ctx: BotContext): Promise<void> {
+  if (!ctx.appUserId || !ctx.callbackQuery || !('data' in ctx.callbackQuery)) return;
+  const match = /^dashboard_refresh_(\d+)$/.exec(ctx.callbackQuery.data);
+  if (!match || Number(match[1]) !== ctx.appUserId) {
+    await ctx.answerCbQuery('This dashboard belongs to another user.', { show_alert: true });
+    return;
+  }
+  await ctx.answerCbQuery('Refreshing…');
+  const account = await exchangeAccountService.getActiveAccount(ctx.appUserId, config.defaultExchange);
+  if (!account || account.status !== 'VERIFIED') {
+    await ctx.reply('Your Phoenix account is not ready. Send /start to continue setup.');
+    return;
+  }
+  try {
+    await ctx.editMessageText(await buildDashboard(ctx.appUserId, account.walletAddress, true), {
+      parse_mode: 'Markdown',
+      ...dashboardKeyboard(ctx.appUserId),
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (!message.includes('message is not modified')) throw error;
+  }
+}
+
+async function buildDashboard(userId: number, walletAddress: string, forceMarketRefresh = false): Promise<string> {
+  const [balancesResult, positionsResult, walletResult, marketsResult] = await Promise.allSettled([
+    marketQueryService.getBalances(userId, config.defaultExchange),
+    marketQueryService.getOpenPositions(userId, config.defaultExchange),
+    accountBalanceService.getWalletBalances(userId, config.defaultExchange),
+    marketQueryService.listMarkets(config.defaultExchange, forceMarketRefresh),
   ]);
 
-  const balanceSummary =
-    balancesResult.status === 'fulfilled'
-      ? balancesResult.value.length > 0
-        ? balancesResult.value.map((balance) => `${balance.asset}: ${formatUsd(balance.total)}`).join('\n')
-        : 'No collateral balance found'
-      : 'Unavailable right now';
-  const openPnlSummary =
-    positionsResult.status === 'fulfilled'
-      ? positionsResult.value.length > 0
-        ? (() => {
-          const pnl = positionsResult.value.reduce((total, position) => total + position.unrealizedPnl, 0);
-          const sign = pnl >= 0 ? '+' : '-';
-          return `${sign}${formatUsd(Math.abs(pnl))} across ${positionsResult.value.length} open position${positionsResult.value.length === 1 ? '' : 's'
-            }`;
-        })()
-        : 'No open positions'
-      : 'Unavailable right now';
+  const phoenixUsdc = balancesResult.status === 'fulfilled'
+    ? balancesResult.value.find((balance) => balance.asset === 'USDC')?.total ?? 0
+    : null;
+  const wallet = walletResult.status === 'fulfilled' ? walletResult.value : null;
+  const pnl = positionsResult.status === 'fulfilled'
+    ? positionsResult.value.reduce((total, position) => total + position.unrealizedPnl, 0)
+    : null;
+  const markets = marketsResult.status === 'fulfilled' ? marketsResult.value : null;
 
-  await ctx.reply(
-    '👋 *Welcome back to TradePilot*\n\n' +
-    `Wallet: \`${exchangeAccount.walletAddress}\`\n` +
-    `Balance:\n${balanceSummary}\n` +
-    `Open PnL: ${openPnlSummary}\n\n` +
-    '/trade - Open a new position\n' +
-    '/positions - View open positions\n' +
-    '/close - Close a position\n' +
-    '/balance - View balances\n' +
-    '/markets - Browse markets\n' +
-    // '/referral - Your referral link and stats\n' +
-    '/settings - Trading preferences\n' +
-    '/history - Recent trades\n' +
-    '/help - Show this message again',
-    { parse_mode: 'Markdown', ...mainMenuKeyboard },
-  );
+  return [
+    '👋 *Welcome back to TradePilot*',
+    '',
+    '💼 *Your Wallet Account*',
+    `Address: \`${shortenAddress(walletAddress)}\``,
+    `SOL: ${wallet ? wallet.sol.toFixed(6) : 'Unavailable'}`,
+    `USDC: ${wallet ? formatUsd(wallet.usdc) : 'Unavailable'}`,
+    '',
+    '🏦 *Your Phoenix Account*',
+    `USDC Collateral: ${phoenixUsdc === null ? 'Unavailable' : formatUsd(phoenixUsdc)}`,
+    `Open PnL: ${pnl === null ? 'Unavailable' : formatSignedUsd(pnl)}`,
+    '',
+    '📈 *Top 3 Market Gainers — 24h*',
+    formatMarketSection(markets, 'gainers'),
+    '',
+    '📉 *Top 3 Market Losers — 24h*',
+    formatMarketSection(markets, 'losers'),
+    '',
+    '💡 Use the menu below to trade, manage positions, fund your account, and access other TradePilot features.',
+  ].join('\n');
+}
+
+function formatSignedUsd(amount: number): string {
+  return `${amount >= 0 ? '+' : '-'}${formatUsd(Math.abs(amount))}`;
+}
+
+function formatMarketSection(markets: MarketInfo[] | null, kind: 'gainers' | 'losers'): string {
+  if (!markets) return 'Market data is unavailable right now.';
+  const selected = markets
+    .filter((market) => Number.isFinite(market.markPrice) && Number.isFinite(market.priceChange24hPercent))
+    .filter((market) => kind === 'gainers' ? market.priceChange24hPercent > 0 : market.priceChange24hPercent < 0)
+    .sort((left, right) => kind === 'gainers'
+      ? right.priceChange24hPercent - left.priceChange24hPercent
+      : left.priceChange24hPercent - right.priceChange24hPercent)
+    .slice(0, 3);
+  if (selected.length === 0) return `No ${kind} available right now.`;
+  return selected.map((market) => {
+    const emoji = market.priceChange24hPercent >= 0 ? '🟢' : '🔴';
+    const change = `${market.priceChange24hPercent >= 0 ? '+' : ''}${market.priceChange24hPercent.toFixed(2)}%`;
+    return `${emoji} *${market.baseAsset}*  ${formatMarketPrice(market.markPrice)}  ${change}`;
+  }).join('\n');
+}
+
+function formatMarketPrice(price: number): string {
+  return `$${price.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: price < 1 ? 8 : 2 })}`;
 }
 
 export async function helpCommand(ctx: BotContext): Promise<void> {

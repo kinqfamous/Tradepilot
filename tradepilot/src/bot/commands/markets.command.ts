@@ -1,7 +1,7 @@
 import { BotContext } from '../../types/bot.types';
 import { marketQueryService } from '../../trading/market-query.service';
 import { config } from '../../config/env';
-import { formatNumber, formatPercent } from '../../utils/format';
+import { formatNumber, formatPercent, formatUsd } from '../../utils/format';
 import { paginationKeyboard } from '../keyboards';
 import { DEFAULT_PAGE_SIZE } from '../../constants';
 
@@ -20,7 +20,7 @@ async function renderMarketsPage(ctx: BotContext, page: number, edit: boolean): 
     .map(
       (m) =>
         `*${m.symbol}*\n` +
-        `Mark: ${formatNumber(m.markPrice)} | Index: ${formatNumber(m.indexPrice)}\n` +
+        `Price: ${formatUsd(m.markPrice)} | ${m.priceChange24hPercent > 0 ? '🟢' : m.priceChange24hPercent < 0 ? '🔴' : '⚪'} 24h: ${formatPercent(m.priceChange24hPercent)}\n` +
         `Funding: ${formatPercent(m.fundingRate * 100)} | OI: ${formatNumber(m.openInterest, 0)}\n` +
         `Max Leverage: ${m.maxLeverage}x`,
     )

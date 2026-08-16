@@ -14,6 +14,8 @@ export interface MarketInfo {
   quoteAsset: string;
   markPrice: number;
   indexPrice: number;
+  /** Change in the mark price over the preceding 24 hours, as a percentage. */
+  priceChange24hPercent: number;
   fundingRate: number; // per funding interval, decimal (0.0001 = 0.01%)
   openInterest: number;
   maxLeverage: number;
@@ -26,6 +28,15 @@ export interface AccountBalance {
   total: number;
   available: number;
   usedMargin: number;
+}
+
+export interface WalletAccountBalances {
+  sol: number;
+  usdc: number;
+}
+
+export interface WithdrawalResult {
+  transactionSignature: string;
 }
 
 export interface ExchangePosition {

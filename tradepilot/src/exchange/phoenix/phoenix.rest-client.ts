@@ -15,6 +15,8 @@ export const PHOENIX_ENDPOINTS = {
   markets: '/v1/view/exchange/markets',
   market: (symbol: string) => `/v1/view/exchange/market/${encodeURIComponent(symbol)}`,
   markPrice: (symbol: string) => `/v1/market/${encodeURIComponent(symbol)}/mark-price`,
+  marketStats: (symbol: string) => `/v1/market/${encodeURIComponent(symbol)}/stats/latest`,
+  marketsStats: '/v1/markets/stats/latest',
   orderBook: (symbol: string) => `/v1/view/orderbook/${encodeURIComponent(symbol)}`,
   traderState: (wallet: string) => `/v1/trader/state/${encodeURIComponent(wallet)}`,
   traderView: (trader: string) => `/v1/view/trader/${encodeURIComponent(trader)}`,

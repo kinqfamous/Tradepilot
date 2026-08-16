@@ -3,8 +3,8 @@ import { exchangeAccountService } from '../users/exchange-account.service';
 import { MarketInfo, AccountBalance, ExchangePosition } from '../types/exchange.types';
 
 export class MarketQueryService {
-  async listMarkets(exchange: string): Promise<MarketInfo[]> {
-    return exchangeRegistry.get(exchange).market.listMarkets();
+  async listMarkets(exchange: string, forceRefresh = false): Promise<MarketInfo[]> {
+    return exchangeRegistry.get(exchange).market.listMarkets(forceRefresh);
   }
 
   /** Resolves free-form ticker text against the real market list for an exchange. */
