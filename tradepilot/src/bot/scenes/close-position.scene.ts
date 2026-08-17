@@ -14,12 +14,42 @@ function state(ctx: BotContext): ClosePositionWizardState {
 export const closePositionScene = new Scenes.WizardScene<BotContext>(
   SCENE_IDS.CLOSE_POSITION,
   async (ctx) => {
-    (ctx.wizard.state as ClosePositionWizardState) = { exchange: config.defaultExchange };
+    const preSeeded = ctx.scene.state as Partial<ClosePositionWizardState> | undefined;
+    const existing = ctx.wizard.state as ClosePositionWizardState | undefined;
+    // WizardContextWizard holds a reference to scene.state. Replacing the
+    // reference only updates this request; mutate it so the exchange and
+    // pre-seeded close details survive the confirmation callback.
+    Object.assign(ctx.wizard.state as ClosePositionWizardState, {
+      ...existing,
+      ...preSeeded,
+      exchange: preSeeded?.exchange ?? existing?.exchange ?? config.defaultExchange,
+    });
 
-    const positions = await marketQueryService.getOpenPositions(ctx.appUserId!, config.defaultExchange);
+    const positions = await marketQueryService.getOpenPositions(ctx.appUserId!, state(ctx).exchange!);
     if (positions.length === 0) {
       await ctx.reply('You have no open positions.', mainMenuKeyboard);
       return ctx.scene.leave();
+    }
+
+    // Fast paths (/close SOL [percent] and the buttons shown by /positions)
+    // enter with both values already known, but still require confirmation.
+    if (state(ctx).market && state(ctx).percent) {
+      const position = positions.find((p) => p.market === state(ctx).market);
+      if (!position) {
+        await ctx.reply(`You have no open position on "${state(ctx).market}".`, mainMenuKeyboard);
+        return ctx.scene.leave();
+      }
+      return showConfirmation(ctx);
+    }
+
+    if (state(ctx).market) {
+      const position = positions.find((p) => p.market === state(ctx).market);
+      if (!position) {
+        await ctx.reply(`You have no open position on "${state(ctx).market}".`, mainMenuKeyboard);
+        return ctx.scene.leave();
+      }
+      await ctx.reply(`How much of *${state(ctx).market}* do you want to close?`, { parse_mode: 'Markdown', ...closePercentKeyboard });
+      return ctx.wizard.selectStep(2);
     }
 
     const list = positions.map((p) => `• ${p.market} (${p.side}, ${p.leverage}x)`).join('\n');
@@ -110,13 +140,17 @@ export const closePositionScene = new Scenes.WizardScene<BotContext>(
 
     if (data === 'confirm') {
       const s = state(ctx);
+      if (!s.market || !s.percent) {
+        await ctx.reply('⚠️ Close details expired. Please start again.', mainMenuKeyboard);
+        return ctx.scene.leave();
+      }
       await ctx.reply('⏳ Submitting close order...');
 
       const result = await tradingService.close({
         userId: ctx.appUserId!,
-        exchange: s.exchange!,
-        market: s.market!,
-        percent: s.percent!,
+        exchange: s.exchange ?? config.defaultExchange,
+        market: s.market,
+        percent: s.percent,
       });
 
       if (result.status === 'REJECTED') {

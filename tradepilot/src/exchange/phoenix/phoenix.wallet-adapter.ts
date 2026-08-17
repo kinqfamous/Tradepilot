@@ -28,6 +28,17 @@ interface PhoenixTraderStateResponse {
 const TOKEN_PROGRAM_ID = new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA');
 const ASSOCIATED_TOKEN_PROGRAM_ID = new PublicKey('ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL');
 const USDC_DECIMALS = 6;
+// Phoenix returns subaccount collateral as integer micro-PhUSD, the same
+// precision used by its deposit/withdrawal instructions. It is not a UI USD
+// amount, so exposing it directly makes a 4 USDC deposit look like 4,000,000.
+const PHUSD_DECIMALS = 6;
+
+function fromAtomicPhusd(amount: string): number {
+  if (!/^-?\d+$/.test(amount)) {
+    throw new Error('Phoenix returned an invalid collateral balance.');
+  }
+  return Number(BigInt(amount)) / 10 ** PHUSD_DECIMALS;
+}
 
 function toAtomicUsdc(amount: number): bigint {
   if (!Number.isFinite(amount) || amount <= 0 || !/^\d+(?:\.\d{1,6})?$/.test(String(amount))) {
@@ -97,12 +108,12 @@ export class PhoenixWalletAdapter implements WalletAdapter {
 
   async getBalances(credential: ExchangeCredential): Promise<AccountBalance[]> {
     const response = await this.client.get<PhoenixTraderStateResponse>(PHOENIX_ENDPOINTS.traderState(credential.walletAddress));
-    const total = response.snapshot.subaccounts.reduce((sum, account) => sum + Number(account.collateral), 0);
+    const total = response.snapshot.subaccounts.reduce((sum, account) => sum + fromAtomicPhusd(account.collateral), 0);
 
-    // Phoenix's trader-state endpoint reports collateral rather than a
-    // per-token wallet ledger. It is the balance available to the perp account.
-    // Always return USDC, including for a newly registered but unfunded trader.
-    return [{ asset: 'USDC', total, available: total, usedMargin: 0 }];
+    // Phoenix's trader-state endpoint reports the canonical collateral token,
+    // PhUSD, in atomic micro-units, rather than the USDC wallet balance used
+    // to make a deposit.
+    return [{ asset: 'PhUSD', total, available: total, usedMargin: 0 }];
   }
 
   async getWalletBalances(credential: ExchangeCredential): Promise<WalletAccountBalances> {
@@ -200,8 +211,11 @@ export class PhoenixWalletAdapter implements WalletAdapter {
   }
 
   private async getUsdcMint(): Promise<PublicKey> {
-    const exchange = await new PhoenixHttpClient({ apiUrl: config.phoenix.restUrl }).exchange().getExchange();
-    return new PublicKey(exchange.keys.canonicalMint);
+    const exchange = await new PhoenixHttpClient({ apiUrl: config.phoenix.restUrl }).exchange().getSnapshot();
+    // Deposits source standard USDC from the linked wallet. canonicalMint is
+    // Phoenix's internal PhUSD collateral mint, so using it for this preflight
+    // incorrectly reports a missing USDC balance.
+    return new PublicKey(exchange.exchange.usdcMint);
   }
 
   async registerAccount(walletAddress: string, feePayer: Keypair) {

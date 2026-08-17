@@ -1,13 +1,16 @@
 import crypto from 'crypto';
-import { exchangeRegistry } from '../exchange/exchange.registry';
 import { exchangeAccountService } from '../users/exchange-account.service';
 import { tradingRepository } from './trading.repository';
 import { settingsService } from '../settings/settings.service';
 import { referralService } from '../referrals/referral.service';
 import { notificationService } from '../notifications/notification.service';
 import { systemStateService } from '../admin/system-state.service';
+import { marketQueryService } from './market-query.service';
 import { log } from '../logger/logger';
 import { PlaceOrderResult } from '../types/exchange.types';
+import { walletKeyService } from '../exchange/wallet-key.service';
+import { createPhoenixConnection } from '../exchange/phoenix/phoenix.order-adapter';
+import { phoenixFlightExecutionService } from '../exchange/phoenix/phoenix-flight-execution.service';
 
 export interface OpenPositionRequest {
   userId: number;
@@ -34,15 +37,28 @@ export interface ClosePositionRequest {
 
 export class TradingService {
   async open(request: OpenPositionRequest): Promise<PlaceOrderResult> {
+    // Platform-wide trading mode (Normal/Read-Only/Maintenance/Emergency
+    // Stop) - separate from, and checked in addition to, the builder-fee
+    // consistency gate inside phoenixFlightExecutionService.
     const { allowed, reason } = await systemStateService.canTrade();
     if (!allowed) {
       return { externalOrderId: '', status: 'REJECTED', errorMessage: reason };
     }
+    // A Flight-routed limit transaction confirms placement, not execution.
+    // Until an exchange fill synchronizer can authoritatively observe fills
+    // and attached conditionals, accepting a real limit order would leave
+    // local positions and fees unsafe to manage. Fail closed rather than
+    // presenting a partially implemented real-fund feature as complete.
+    if (request.orderType === 'LIMIT') {
+      return {
+        externalOrderId: '',
+        status: 'REJECTED',
+        errorMessage: 'Limit orders are temporarily unavailable while execution synchronization is being completed. Use a market order for now.',
+      };
+    }
 
     const account = await exchangeAccountService.requireVerifiedAccount(request.userId, request.exchange);
     const settings = await settingsService.get(request.userId);
-    const adapter = exchangeRegistry.get(request.exchange);
-    const credential = await exchangeAccountService.getCredential(account);
 
     const idempotencyKey = request.idempotencyKey ?? crypto.randomUUID();
 
@@ -53,6 +69,35 @@ export class TradingService {
 
     const leverage = request.leverage;
     const slippageBps = request.slippageBpsOverride ?? settings.defaultSlippageBps;
+    const notionalUsd = request.collateralUsd * leverage;
+
+    // Reference price for sizing: the limit price if given, otherwise the
+    // current mark price. This does NOT go through Flight/Rise - it's a
+    // read-only market data lookup, which is fine to keep on the existing
+    // adapter (no funds move on a read). See phoenix.market-adapter.ts.
+    const market = await marketQueryService.getMarket(request.exchange, request.market);
+    const referencePrice = request.limitPrice ?? market?.markPrice;
+    if (!referencePrice || referencePrice <= 0) {
+      return { externalOrderId: '', status: 'REJECTED', errorMessage: `Could not determine a price for ${request.market}.` };
+    }
+    if (request.stopLossPrice !== undefined || request.takeProfitPrice !== undefined) {
+      const stopLoss = request.stopLossPrice;
+      const takeProfit = request.takeProfitPrice;
+      const isLong = request.side === 'LONG';
+      if (
+        (stopLoss !== undefined && (!Number.isFinite(stopLoss) || stopLoss <= 0 || (isLong ? stopLoss >= referencePrice : stopLoss <= referencePrice))) ||
+        (takeProfit !== undefined && (!Number.isFinite(takeProfit) || takeProfit <= 0 || (isLong ? takeProfit <= referencePrice : takeProfit >= referencePrice)))
+      ) {
+        return {
+          externalOrderId: '',
+          status: 'REJECTED',
+          errorMessage: isLong
+            ? 'For a long position, stop loss must be below and take profit above the entry price.'
+            : 'For a short position, stop loss must be above and take profit below the entry price.',
+        };
+      }
+    }
+    const baseUnits = notionalUsd / referencePrice;
 
     const dbOrder = await tradingRepository.createOrder({
       userId: request.userId,
@@ -61,7 +106,7 @@ export class TradingService {
       market: request.market,
       type: request.orderType ?? 'MARKET',
       side: request.side === 'LONG' ? 'BUY' : 'SELL',
-      size: 0, // filled in once the adapter computes it
+      size: baseUnits,
       leverage,
       slippageBps,
       idempotencyKey,
@@ -69,30 +114,50 @@ export class TradingService {
     });
 
     try {
-      const result = await adapter.trading.openPosition({
-        credential,
-        market: request.market,
-        side: request.side,
-        collateralUsd: request.collateralUsd,
-        leverage,
-        slippageBps,
-        orderType: request.orderType ?? 'MARKET',
-        limitPrice: request.limitPrice,
-        stopLossPrice: request.stopLossPrice,
-        takeProfitPrice: request.takeProfitPrice,
+      const traderKeypair = await walletKeyService.getKeypair(account.id);
+      const connection = createPhoenixConnection();
+
+      const execResult = await phoenixFlightExecutionService.executeOrder({
+        connection,
+        traderKeypair,
+        userId: request.userId,
+        orderId: dbOrder.id,
+        symbol: request.market,
+        side: request.side === 'LONG' ? 'buy' : 'sell',
+        baseUnits: String(baseUnits),
+        notionalUsd,
         idempotencyKey,
+        type: 'market',
+        priceUsd: request.limitPrice ? String(request.limitPrice) : undefined,
+        stopLossPrice: request.stopLossPrice ? String(request.stopLossPrice) : undefined,
+        takeProfitPrice: request.takeProfitPrice ? String(request.takeProfitPrice) : undefined,
+        slippageBps,
       });
 
-      if (result.status === 'REJECTED') {
-        await tradingRepository.updateOrder(dbOrder.id, { status: 'REJECTED', errorMessage: result.errorMessage });
-        await notificationService.notify(request.userId, 'TRADE_FAILED', `❌ Trade failed: ${result.errorMessage}`);
-        return result;
+      if (!execResult.success) {
+        await tradingRepository.updateOrder(dbOrder.id, { status: 'REJECTED', errorMessage: execResult.errorMessage });
+        await notificationService.notify(request.userId, 'TRADE_FAILED', `❌ Trade failed: ${execResult.errorMessage}`);
+        return { externalOrderId: '', status: 'REJECTED', errorMessage: execResult.errorMessage };
+      }
+
+      // A confirmed limit-order transaction means the order is resting on
+      // Phoenix, not that it has filled. Do not create a position/trade or
+      // recognise the builder fee until an order/fill synchroniser observes
+      // the actual fill.
+      if (!execResult.settled) {
+        await tradingRepository.updateOrder(dbOrder.id, {
+          status: 'SUBMITTED',
+          exchangeOrderId: execResult.signature,
+          txSignature: execResult.signature,
+        });
+        await notificationService.notify(request.userId, 'TRADE_FILLED', `✅ Limit order for ${request.market} is now resting on Phoenix.`);
+        return { externalOrderId: execResult.signature ?? '', status: 'SUBMITTED', txSignature: execResult.signature };
       }
 
       await tradingRepository.updateOrder(dbOrder.id, {
         status: 'FILLED',
-        exchangeOrderId: result.externalOrderId,
-        txSignature: result.txSignature,
+        exchangeOrderId: execResult.signature,
+        txSignature: execResult.signature,
         filledAt: new Date(),
       });
 
@@ -102,8 +167,8 @@ export class TradingService {
         exchange: request.exchange,
         market: request.market,
         side: request.side,
-        entryPrice: result.fillPrice ?? 0,
-        size: request.collateralUsd * leverage / (result.fillPrice || 1),
+        entryPrice: referencePrice,
+        size: baseUnits,
         leverage,
         margin: request.collateralUsd,
       });
@@ -116,12 +181,12 @@ export class TradingService {
         exchange: request.exchange,
         market: request.market,
         side: request.side === 'LONG' ? 'BUY' : 'SELL',
-        price: result.fillPrice ?? 0,
-        size: request.collateralUsd * leverage / (result.fillPrice || 1),
-        txSignature: result.txSignature,
+        price: referencePrice,
+        size: baseUnits,
+        txSignature: execResult.signature,
       });
 
-      await referralService.recordTradeVolume(request.userId, request.collateralUsd * leverage);
+      await referralService.recordTradeVolume(request.userId, notionalUsd);
       await notificationService.notify(
         request.userId,
         'TRADE_FILLED',
@@ -130,7 +195,11 @@ export class TradingService {
 
       await log.info('TRADE', 'Position opened', { userId: request.userId, market: request.market, side: request.side });
 
-      return result;
+      return {
+        externalOrderId: execResult.signature ?? '',
+        status: 'FILLED',
+        txSignature: execResult.signature,
+      };
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       await tradingRepository.updateOrder(dbOrder.id, { status: 'FAILED', errorMessage });
@@ -142,29 +211,53 @@ export class TradingService {
 
   async close(request: ClosePositionRequest): Promise<PlaceOrderResult> {
     const account = await exchangeAccountService.requireVerifiedAccount(request.userId, request.exchange);
-    const settings = await settingsService.get(request.userId);
-    const adapter = exchangeRegistry.get(request.exchange);
-    const credential = await exchangeAccountService.getCredential(account);
+    if (!Number.isFinite(request.percent) || request.percent <= 0 || request.percent > 100) {
+      return { externalOrderId: '', status: 'REJECTED', errorMessage: 'Close percentage must be between 1 and 100.' };
+    }
 
     const idempotencyKey = request.idempotencyKey ?? crypto.randomUUID();
     const dbPosition = await tradingRepository.findOpenPosition(request.userId, request.exchange, request.market);
+    const exchangePosition = (await marketQueryService.getOpenPositions(request.userId, request.exchange))
+      .find((position) => position.market === request.market);
+    if (!exchangePosition || exchangePosition.size <= 0) {
+      return { externalOrderId: '', status: 'REJECTED', errorMessage: 'No open position on this market.' };
+    }
+
+    const closingSide: 'buy' | 'sell' = exchangePosition.side === 'LONG' ? 'sell' : 'buy';
+    const baseUnitsToClose = (exchangePosition.size * request.percent) / 100;
+    const market = await marketQueryService.getMarket(request.exchange, request.market);
+    const referencePrice = market?.markPrice ?? exchangePosition.entryPrice ?? (dbPosition ? Number(dbPosition.entryPrice) : 0);
+    if (!Number.isFinite(referencePrice) || referencePrice <= 0) {
+      return { externalOrderId: '', status: 'REJECTED', errorMessage: `Could not determine a price for ${request.market}.` };
+    }
+    const notionalUsd = baseUnitsToClose * referencePrice;
 
     try {
-      const result = await adapter.trading.closePosition({
-        credential,
-        market: request.market,
-        percent: request.percent,
-        slippageBps: settings.defaultSlippageBps,
+      const traderKeypair = await walletKeyService.getKeypair(account.id);
+      const connection = createPhoenixConnection();
+
+      const execResult = await phoenixFlightExecutionService.executeOrder({
+        connection,
+        traderKeypair,
+        userId: request.userId,
+        symbol: request.market,
+        side: closingSide,
+        baseUnits: String(baseUnitsToClose),
+        notionalUsd,
         idempotencyKey,
+        type: 'market',
+        reduceOnly: true,
       });
 
-      if (result.status === 'REJECTED') {
-        await notificationService.notify(request.userId, 'TRADE_FAILED', `❌ Close failed: ${result.errorMessage}`);
-        return result;
+      if (!execResult.success) {
+        await notificationService.notify(request.userId, 'TRADE_FAILED', `❌ Close failed: ${execResult.errorMessage}`);
+        return { externalOrderId: '', status: 'REJECTED', errorMessage: execResult.errorMessage };
       }
 
       if (dbPosition && request.percent === 100) {
         await tradingRepository.closePosition(dbPosition.id, 0);
+      } else if (dbPosition) {
+        await tradingRepository.updatePositionSize(dbPosition.id, Math.max(0, Number(dbPosition.size) - baseUnitsToClose));
       }
 
       await notificationService.notify(
@@ -173,7 +266,11 @@ export class TradingService {
         `✅ Closed ${request.percent}% of ${request.market}.`,
       );
 
-      return result;
+      return {
+        externalOrderId: execResult.signature ?? '',
+        status: 'FILLED',
+        txSignature: execResult.signature,
+      };
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       await notificationService.notify(request.userId, 'TRADE_FAILED', `❌ Close failed: ${errorMessage}`);
@@ -183,15 +280,12 @@ export class TradingService {
   }
 
   async closeAll(userId: number, exchange: string): Promise<PlaceOrderResult[]> {
-    const account = await exchangeAccountService.requireVerifiedAccount(userId, exchange);
-    const adapter = exchangeRegistry.get(exchange);
-    const credential = await exchangeAccountService.getCredential(account);
-
-    const results = await adapter.trading.closeAllPositions(credential);
-
     const openPositions = await tradingRepository.listOpenPositions(userId);
+    const results: PlaceOrderResult[] = [];
+
     for (const position of openPositions) {
-      await tradingRepository.closePosition(position.id, 0);
+      const result = await this.close({ userId, exchange, market: position.market, percent: 100 });
+      results.push(result);
     }
 
     await notificationService.notify(userId, 'TRADE_FILLED', `✅ Closed all positions (${results.length}).`);

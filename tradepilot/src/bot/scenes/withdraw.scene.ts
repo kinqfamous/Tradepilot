@@ -21,7 +21,7 @@ export const withdrawScene = new Scenes.WizardScene<BotContext>(
   SCENE_IDS.WITHDRAW,
   async (ctx) => {
     if (!ctx.appUserId) return ctx.scene.leave();
-    await ctx.reply('💸 *Withdraw USDC*\n\nChoose the account to withdraw from:', { parse_mode: 'Markdown', ...withdrawalSourceKeyboard });
+    await ctx.reply('💸 *Withdraw funds*\n\nChoose the account to withdraw from:', { parse_mode: 'Markdown', ...withdrawalSourceKeyboard });
     return ctx.wizard.next();
   },
   async (ctx) => {
@@ -32,8 +32,8 @@ export const withdrawScene = new Scenes.WizardScene<BotContext>(
     state(ctx).source = ctx.callbackQuery.data === 'withdraw_phoenix' ? 'PHOENIX' : 'WALLET';
     if (state(ctx).source === 'PHOENIX') {
       const balances = await marketQueryService.getBalances(ctx.appUserId!, config.defaultExchange);
-      const available = balances.find((balance) => balance.asset === 'USDC')?.available ?? 0;
-      await ctx.reply(`Phoenix available USDC: *${available.toFixed(6)}*\n\nEnter the amount to send back to your linked wallet. Phoenix withdrawals cannot go to another address.`, { parse_mode: 'Markdown' });
+      const available = balances.find((balance) => balance.asset === 'PhUSD')?.available ?? 0;
+      await ctx.reply(`Phoenix available PhUSD collateral: *${available.toFixed(6)}*\n\nEnter the amount to redeem to USDC in your linked wallet. Phoenix withdrawals cannot go to another address.`, { parse_mode: 'Markdown' });
     } else {
       const wallet = await accountBalanceService.getWalletBalances(ctx.appUserId!, config.defaultExchange);
       await ctx.reply(`Wallet USDC: *${wallet.usdc.toFixed(6)}*\n\nEnter the amount to send.`, { parse_mode: 'Markdown' });
@@ -71,7 +71,7 @@ export const withdrawScene = new Scenes.WizardScene<BotContext>(
       const result = request.source === 'PHOENIX'
         ? await accountBalanceService.withdrawFromPhoenix(ctx.appUserId!, config.defaultExchange, request.amount!)
         : await accountBalanceService.withdrawFromWallet(ctx.appUserId!, config.defaultExchange, request.destination!, request.amount!);
-      await ctx.reply(`✅ Withdrawal confirmed.\n\nAmount: *${request.amount} USDC*\nTransaction: \`${result.transactionSignature}\``, { parse_mode: 'Markdown', ...mainMenuKeyboard });
+      await ctx.reply(`✅ Withdrawal confirmed.\n\nAmount: *${request.amount} ${request.source === 'PHOENIX' ? 'PhUSD redeemed to USDC' : 'USDC'}*\nTransaction: \`${result.transactionSignature}\``, { parse_mode: 'Markdown', ...mainMenuKeyboard });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       await ctx.reply(`❌ Withdrawal failed: ${message}`, mainMenuKeyboard);
@@ -83,7 +83,8 @@ export const withdrawScene = new Scenes.WizardScene<BotContext>(
 async function preview(ctx: BotContext) {
   const request = state(ctx);
   const destination = request.source === 'PHOENIX' ? 'your linked wallet' : `\`${request.destination}\``;
-  await ctx.reply(`🔍 *Confirm withdrawal*\n\nFrom: ${request.source === 'PHOENIX' ? 'Phoenix account' : 'Your wallet'}\nAmount: *${request.amount} USDC*\nTo: ${destination}`, { parse_mode: 'Markdown', ...confirmCancelKeyboard });
+  const asset = request.source === 'PHOENIX' ? 'PhUSD (redeemed to USDC)' : 'USDC';
+  await ctx.reply(`🔍 *Confirm withdrawal*\n\nFrom: ${request.source === 'PHOENIX' ? 'Phoenix account' : 'Your wallet'}\nAmount: *${request.amount} ${asset}*\nTo: ${destination}`, { parse_mode: 'Markdown', ...confirmCancelKeyboard });
   return ctx.wizard.selectStep(4);
 }
 

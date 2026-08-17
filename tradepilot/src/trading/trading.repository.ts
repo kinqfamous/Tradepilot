@@ -25,6 +25,10 @@ export class TradingRepository {
     });
   }
 
+  async updatePositionSize(id: number, size: number): Promise<Position> {
+    return prisma.position.update({ where: { id }, data: { size } });
+  }
+
   async findOpenPosition(userId: number, exchange: string, market: string): Promise<Position | null> {
     return prisma.position.findFirst({
       where: { userId, exchange, market, status: 'OPEN' },

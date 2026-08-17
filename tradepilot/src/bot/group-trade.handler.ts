@@ -5,7 +5,7 @@ import { settingsService } from '../settings/settings.service';
 import { marketQueryService } from '../trading/market-query.service';
 import { tradingService } from '../trading/trading.service';
 import { BotContext } from '../types/bot.types';
-import { formatNumber, formatPercent, parseGroupCommand } from '../utils/format';
+import { formatNumber, formatPercent } from '../utils/format';
 import { exchangeAccountService } from '../users/exchange-account.service';
 import { userRepository } from '../users/user.repository';
 import { buildGroupTradeDeepLink } from './group-trade.util';
@@ -68,39 +68,25 @@ async function rejectNonOwner(ctx: BotContext): Promise<void> {
 
 export function registerGroupTradeHandlers(bot: Telegraf<BotContext>): void {
   bot.on('text', async (ctx, next) => {
-    if (ctx.chat?.type !== 'group' && ctx.chat?.type !== 'supergroup') return next();
     const text = ctx.message.text;
-    const mention = `@${config.telegram.botUsername}`;
-    if (!text.toLowerCase().includes(mention.toLowerCase())) return next();
+    if (text.startsWith('/')) return next();
 
-    const parsed = parseGroupCommand(text.replace(new RegExp(mention.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i'), ''));
-    if (!parsed) {
-      await ctx.reply(`Try @${config.telegram.botUsername} SOL, @${config.telegram.botUsername} long SOL, or @${config.telegram.botUsername} SOL short.`);
-      return;
-    }
+    const market = await findMentionedMarket(text);
+    if (!market) return next();
 
-    const market = await marketQueryService.resolveTicker(config.defaultExchange, parsed.rawTicker);
-    if (!market) {
-      await ctx.reply(`Unknown ticker "${parsed.rawTicker}". Check /markets for valid symbols.`);
+    const side = inferSide(text);
+    if (side) {
+      if (ctx.chat?.type === 'private') {
+        if (!ctx.appUserId) {
+          await ctx.reply('Send /start first to set up your trading account.');
+          return;
+        }
+        return ctx.scene.enter(SCENE_IDS.TRADE, { exchange: config.defaultExchange, market: market.symbol, side });
+      }
+      await handleDirectInstruction(ctx, market, side, market.baseAsset);
       return;
     }
-    if (parsed.side) {
-      await handleDirectInstruction(ctx, market, parsed.side, parsed.rawTicker);
-      return;
-    }
-    await ctx.reply(
-      `📈 *${market.symbol}*\n\n` +
-        `Mark price: *$${formatNumber(market.markPrice)}*\n` +
-        `Funding: ${formatPercent(market.fundingRate * 100)}\n` +
-        `Max leverage: ${market.maxLeverage}x`,
-      {
-        parse_mode: 'Markdown',
-        ...Markup.inlineKeyboard([
-          Markup.button.callback('🟢 Long', `grouptrade|LONG|${market.symbol}`),
-          Markup.button.callback('🔴 Short', `grouptrade|SHORT|${market.symbol}`),
-        ]),
-      },
-    );
+    await showMarketPrompt(ctx, market);
   });
 
   bot.action(/^grouptrade\|(LONG|SHORT)\|(.+)$/, async (ctx) => {
@@ -110,6 +96,10 @@ export function registerGroupTradeHandlers(bot: Telegraf<BotContext>): void {
     await ctx.answerCbQuery();
     const side = match[1] as 'LONG' | 'SHORT';
     const symbol = match[2];
+    if (ctx.chat?.type === 'private') {
+      if (!ctx.appUserId) return ctx.reply('Send /start first to set up your trading account.');
+      return ctx.scene.enter(SCENE_IDS.TRADE, { exchange: config.defaultExchange, market: symbol, side });
+    }
     const verified = await isVerified(ctx.from.id);
     if (!verified.ok) {
       const prompt = verifyPrompt(side, symbol);
@@ -169,4 +159,49 @@ export function registerGroupTradeHandlers(bot: Telegraf<BotContext>): void {
     await ctx.answerCbQuery();
     await ctx.reply('Cancelled.');
   });
+}
+
+const TICKER_ALIASES: Record<string, string> = {
+  BITCOIN: 'BTC',
+  ETHEREUM: 'ETH',
+  SOLANA: 'SOL',
+};
+
+function inferSide(text: string): 'LONG' | 'SHORT' | undefined {
+  const words = text.toLowerCase().match(/[a-z]+/g) ?? [];
+  if (words.some((word) => word === 'long' || word === 'buy')) return 'LONG';
+  if (words.some((word) => word === 'short' || word === 'sell')) return 'SHORT';
+  return undefined;
+}
+
+async function findMentionedMarket(text: string): Promise<MarketInfo | null> {
+  const candidates = text.match(/\$?[a-z0-9]+(?:-[a-z0-9]+)?/gi) ?? [];
+  if (candidates.length === 0) return null;
+
+  const markets = await marketQueryService.listMarkets(config.defaultExchange);
+  for (const candidate of candidates) {
+    const normalized = candidate.replace(/^\$/, '').toUpperCase();
+    const asset = TICKER_ALIASES[normalized] ?? normalized;
+    const symbol = asset.endsWith('-PERP') ? asset : `${asset}-PERP`;
+    const market = markets.find((item) => item.symbol === symbol || item.baseAsset.toUpperCase() === asset);
+    if (market) return market;
+  }
+  return null;
+}
+
+async function showMarketPrompt(ctx: BotContext, market: MarketInfo): Promise<void> {
+  await ctx.reply(
+    `📈 *${market.symbol}*\n\n` +
+      `Mark price: *$${formatNumber(market.markPrice)}*\n` +
+      `Funding: ${formatPercent(market.fundingRate * 100)}\n` +
+      `Max leverage: ${market.maxLeverage}x\n\n` +
+      'Would you like to go long or short?',
+    {
+      parse_mode: 'Markdown',
+      ...Markup.inlineKeyboard([
+        Markup.button.callback('🟢 Long', `grouptrade|LONG|${market.symbol}`),
+        Markup.button.callback('🔴 Short', `grouptrade|SHORT|${market.symbol}`),
+      ]),
+    },
+  );
 }

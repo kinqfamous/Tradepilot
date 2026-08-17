@@ -106,13 +106,14 @@ async function buildDashboard(userId: number, walletAddress: string, forceMarket
     marketQueryService.listMarkets(config.defaultExchange, forceMarketRefresh),
   ]);
 
-  const phoenixUsdc = balancesResult.status === 'fulfilled'
-    ? balancesResult.value.find((balance) => balance.asset === 'USDC')?.total ?? 0
+  const phoenixPhusd = balancesResult.status === 'fulfilled'
+    ? balancesResult.value.find((balance) => balance.asset === 'PhUSD')?.total ?? 0
     : null;
   const wallet = walletResult.status === 'fulfilled' ? walletResult.value : null;
   const pnl = positionsResult.status === 'fulfilled'
     ? positionsResult.value.reduce((total, position) => total + position.unrealizedPnl, 0)
     : null;
+  const openTrades = positionsResult.status === 'fulfilled' ? positionsResult.value : null;
   const markets = marketsResult.status === 'fulfilled' ? marketsResult.value : null;
 
   return [
@@ -124,8 +125,9 @@ async function buildDashboard(userId: number, walletAddress: string, forceMarket
     `USDC: ${wallet ? formatUsd(wallet.usdc) : 'Unavailable'}`,
     '',
     '🏦 *Your Phoenix Account*',
-    `USDC Collateral: ${phoenixUsdc === null ? 'Unavailable' : formatUsd(phoenixUsdc)}`,
+    `PhUSD Collateral: ${phoenixPhusd === null ? 'Unavailable' : formatUsd(phoenixPhusd)}`,
     `Open PnL: ${pnl === null ? 'Unavailable' : formatSignedUsd(pnl)}`,
+    `Open Trades: ${formatOpenTrades(openTrades)}`,
     '',
     '📈 *Top 3 Market Gainers — 24h*',
     formatMarketSection(markets, 'gainers'),
@@ -138,7 +140,16 @@ async function buildDashboard(userId: number, walletAddress: string, forceMarket
 }
 
 function formatSignedUsd(amount: number): string {
-  return `${amount >= 0 ? '+' : '-'}${formatUsd(Math.abs(amount))}`;
+  const emoji = amount >= 0 ? '🟢' : '🔴';
+  return `${emoji} ${amount >= 0 ? '+' : '-'}${formatUsd(Math.abs(amount))}`;
+}
+
+function formatOpenTrades(positions: Awaited<ReturnType<typeof marketQueryService.getOpenPositions>> | null): string {
+  if (positions === null) return 'Unavailable';
+  if (positions.length === 0) return 'None';
+  return positions
+    .map((position) => `${position.side === 'LONG' ? '🟢 Long' : '🔴 Short'} ${position.market}`)
+    .join(', ');
 }
 
 function formatMarketSection(markets: MarketInfo[] | null, kind: 'gainers' | 'losers'): string {

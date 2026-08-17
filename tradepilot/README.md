@@ -38,6 +38,12 @@ This is a large platform. Everything listed below is **fully implemented, real, 
      layer currently polls REST on-demand (`/positions`, `/balance`) rather than pushing
      unsolicited updates — wiring `realtime.subscribeAccount` to a notification is a
      small, contained addition on top of what's here.
+   - **Limit-order cancellation is not implemented.** `/trade` supports placing limit orders,
+     but there's currently no way to cancel a resting one. I could not find a confirmed
+     `@ellipsis-labs/rise` cancel-order method in what I verified from Phoenix's docs (only
+     `placeLimitOrder`/`placeMarketOrder`/registration calls) - rather than invent one, this is
+     left as a known gap. Add it to `flight.client.ts` once you've confirmed the real method
+     name against the SDK's actual TypeScript types.
 
 Nothing here is a stub pretending to be finished — these are genuine, deliberate scope
 boundaries on a platform this size, called out explicitly instead of silently glossed over.
@@ -46,7 +52,7 @@ boundaries on a platform this size, called out explicitly instead of silently gl
 
 ## Architecture
 
-```
+
 src/
 ├── config/env.ts              # Environment loading & validation
 ├── constants/                 # Shared constants
@@ -72,7 +78,7 @@ src/
     ├── session.ts, keyboards.ts
     ├── scenes/                 # Onboarding, link-account, trade, close-position, settings, broadcast
     └── commands/                # start, positions, balance, markets, referral, settings, history, admin
-```
+
 
 ### Exchange adapter pattern
 
@@ -122,24 +128,147 @@ Maintenance mode blocks everything, including reads.
 See `.env.example` for the full list with descriptions. The two you must generate yourself:
 
 ```bash
-# CREDENTIALS_ENCRYPTION_KEY and JWT_SECRET
+
+
+
+CREDENTIALS_ENCRYPTION_KEY and JWT_SECRET
+
 node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
-```
+
 
 ## Database
 
 ```bash
 npm run prisma:migrate   # creates the schema in your Postgres instance
-```
 
-## Running
+Running
 
-```bash
 npm run dev       # the bot itself
 npm run worker     # separately: the notification-delivery worker (requires Redis)
-```
 
-## Tech stack
+Phoenix Flight builder fees
 
-TypeScript, Node.js, Telegraf, PostgreSQL, Prisma ORM, Redis, BullMQ, Axios, `ws`, Pino, Zod,
-`@solana/web3.js`.
+TradePilot charges its own platform fee (default 8 bps / 0.08%) on trades, additive on top
+of Phoenix's own trading fee, using Phoenix's official Flight/Rise builder-fee mechanism
+(@ellipsis-labs/rise). See src/exchange/phoenix/flight.client.ts for the full technical
+notes on what's independently verified vs. best-effort.
+
+Setup:
+
+
+
+
+
+Register a builder authority - either through
+
+flight.phoenix.trade directly with your own wallet, or via
+ npm run register-builder -- --keypair ./builder-keypair.json --fee-bps 8 (see the script's
+ header comment for full usage; the signer file must never be committed or placed in .env).
+
+
+
+Set TRADEPILOT_BUILDER_AUTHORITY in .env to that account's public key.
+
+
+
+Restart the bot. /admin builder confirms registration status.
+
+Admin commands: /admin fees, /admin fees on, /admin fees off, /admin builder,
+/admin revenue, /admin setbuilderfee <bps>.
+
+Design notes worth knowing:
+
+
+
+
+
+The database (BuilderConfig) is the runtime source of truth for the fee rate after first
+boot - .env only seeds the initial value. Changing the fee via /admin setbuilderfee does
+not touch anything on-chain; it only changes what TradePilot calculates and displays as
+"expected." Whether Phoenix's Flight program itself supports updating a fee on an
+already-registered builder (vs. requiring re-registration) is not something I could
+independently confirm - verify this before assuming a DB-level change alone changes what's
+actually charged on-chain.
+
+
+
+Every FeeEvent snapshots the builder authority/PDA/subaccount/fee-bps at the moment of the
+trade, so a later admin change never rewrites fee history.
+
+
+
+confirmedFeeUsd is recorded as equal to the expected amount once the routed transaction
+confirms on-chain - there's no independently verified way to read back the exact amount
+Phoenix's program actually deducted. If you find that API, wire the comparison into
+reconcile() and flag mismatches rather than trusting either number blindly.
+
+
+
+Withdrawal is entirely Phoenix's mechanism, not TradePilot's - /admin builder links to
+flight.phoenix.trade rather than fabricating a withdrawal endpoint.
+
+Production validation checklist
+
+Run through this in order before enabling public trading with real funds. None of this is
+automated - each step requires a live action and a human looking at the result.
+
+
+
+
+
+npm test - all automated tests pass (uses mocks only, never real funds).
+
+
+
+Register the Flight builder (see Setup above) and confirm /admin builder shows
+
+REGISTERED.
+
+
+
+Confirm the fee is set to 8 bps: /admin fees.
+
+
+
+Execute one very small real test trade (smallest size Phoenix allows).
+
+
+
+Confirm the trade transaction on-chain via a Solana explorer.
+
+
+
+Confirm Phoenix's own trading fee was charged as expected (check the transaction's parsed
+
+instructions/balance changes).
+
+
+
+Confirm TradePilot's builder fee was charged as part of the same transaction - it should
+
+not be a second, separate transaction.
+
+
+
+Check /admin builder - the builder account's balance should reflect the new fee.
+
+
+
+Confirm that fee shows up in Phoenix's own Flight interface
+
+(flight.phoenix.trade) under your builder account, not just in TradePilot's database.
+
+
+
+Do a real (small) withdrawal through Phoenix's official Flight withdrawal flow - confirm the
+
+funds actually arrive in your wallet.
+
+
+
+Only after all ten steps check out, flip real users on.
+
+Tech stack
+
+TypeScript, Node.js, Telegraf, PostgreSQL, Prisma ORM, Redis, BullMQ, Axios, ws, Pino, Zod,
+@solana/web3.js, @ellipsis-labs/rise, Vitest.

@@ -48,6 +48,7 @@ model User {
   sessions      UserSession[]
   referralStats ReferralStats?
   auditLogs     AdminAuditLog[]  @relation("AdminActor")
+  feeEvents     FeeEvent[]
 
   @@index([status])
   @@index([referredById])
@@ -99,8 +100,7 @@ model ExchangeAccount {
   linkedAt             DateTime              @default(now())
   verifiedAt           DateTime?
   revokedAt            DateTime?
-  // A Phoenix referral was activated for this wallet. The referral code
-  // itself is deliberately not retained.
+  // Tracks referral activation without retaining the referral code itself.
   phoenixReferralActivatedAt DateTime?
 
   positions Position[]
@@ -212,6 +212,7 @@ model Order {
   filledAt  DateTime?
 
   trades Trade[]
+  feeEvents FeeEvent[]
 
   @@index([userId, status])
   @@index([exchange, market])
@@ -238,6 +239,8 @@ model Trade {
 
   txSignature String?
   executedAt  DateTime @default(now())
+
+  feeEvents FeeEvent[]
 
   @@index([userId])
   @@index([exchange, market])
@@ -342,12 +345,97 @@ enum TradingMode {
 model SystemState {
   id          Int         @id @default(autoincrement())
   mode        TradingMode @default(NORMAL)
-  // Owner-controlled onboarding gate. It applies only to new Phoenix
-  // onboarding; Phoenix registration remains a user-funded on-chain step.
   requirePhoenixReferralCode Boolean @default(true)
   reason      String?
   changedBy   Int?
   updatedAt   DateTime    @updatedAt
+}
+
+// ------------------------------------------------------------
+// Phoenix Flight builder fees
+// ------------------------------------------------------------
+
+enum BuilderRegistrationStatus {
+  UNREGISTERED
+  PENDING
+  REGISTERED
+  FAILED
+}
+
+// Single-row table (same pattern as SystemState) holding TradePilot's
+// Phoenix Flight builder configuration. The builder authority PUBLIC key
+// itself is NOT stored here - it's sourced exclusively from
+// PHOENIX_BUILDER_AUTHORITY_PUBLIC_KEY in the environment, since
+// registration and fee withdrawal happen externally via
+// flight.phoenix.trade using a wallet outside this codebase. This table
+// only tracks the fee percentage and on/off state, plus the last
+// read-only verification of that external registration.
+// Single-row table (same pattern as SystemState) holding TradePilot's
+// Phoenix Flight builder configuration. Per spec: environment variables
+// seed the INITIAL values on first boot; this table is the runtime
+// source of truth thereafter - admin changes update this, never the env.
+// builderAuthority is a PUBLIC key only - TradePilot never stores or
+// signs with this account's private key. Registration/withdrawal happen
+// externally (flight.phoenix.trade, or the one-time
+// scripts/register-phoenix-flight-builder.ts admin tool).
+model BuilderConfig {
+  id                     Int                       @id @default(autoincrement())
+  builderAuthority       String?
+  builderTraderAccount   String?
+  builderPdaIndex        Int                       @default(0)
+  builderSubaccountIndex Int                       @default(0)
+  registrationStatus     BuilderRegistrationStatus @default(UNREGISTERED)
+  registrationCheckedAt  DateTime?
+  builderFeeBps          Int                       @default(8)
+  maxFeeBps              Int                       @default(50)
+  builderFeeEnabled      Boolean                   @default(true)
+  updatedBy              Int?
+  updatedAt              DateTime                  @updatedAt
+}
+
+enum FeeEventStatus {
+  EXPECTED
+  PENDING
+  CONFIRMED
+  FAILED
+  RECONCILIATION_REQUIRED
+}
+
+// One row per fee charged (or attempted) on a Flight-routed trade. feeBps
+// is captured per-event (not re-read from BuilderConfig later) so changing
+// the platform fee never rewrites the history of what was actually charged.
+model FeeEvent {
+  id                     Int            @id @default(autoincrement())
+  userId                 Int
+  user                   User           @relation(fields: [userId], references: [id])
+  orderId                Int?
+  order                  Order?         @relation(fields: [orderId], references: [id])
+  tradeId                Int?
+  trade                  Trade?         @relation(fields: [tradeId], references: [id])
+  market                 String
+  // Snapshot of the builder config AT THE TIME of this trade, so a later
+  // admin change (fee bps, or even builder authority) never rewrites the
+  // history of what was actually configured when this fee was charged.
+  builderAuthority       String?
+  builderPdaIndex        Int
+  builderSubaccountIndex Int
+  notionalUsd            Decimal        @db.Decimal(20, 8)
+  feeBps                 Int
+  currency               String         @default("USDC")
+  expectedFeeUsd         Decimal        @db.Decimal(20, 8)
+  confirmedFeeUsd        Decimal?       @db.Decimal(20, 8)
+  status                 FeeEventStatus @default(EXPECTED)
+  builderTxSignature     String?
+  failureReason          String?
+  // Prevents the same trade from ever being charged (or recorded) twice -
+  // derived from the order's own idempotency key, not generated fresh here.
+  idempotencyKey         String         @unique
+  createdAt              DateTime       @default(now())
+  confirmedAt            DateTime?
+
+  @@index([userId])
+  @@index([status])
+  @@index([market])
 }
 
 model AdminAuditLog {

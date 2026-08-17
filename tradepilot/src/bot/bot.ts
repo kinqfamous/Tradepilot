@@ -47,6 +47,15 @@ import {
   handleAdminModeEmergency,
   handleAdminTogglePhoenixReferralGate,
 } from './commands/admin.command';
+import {
+  handleAdminBuilder,
+  handleAdminBuilderButton,
+  handleAdminFees,
+  handleAdminFeesButton,
+  handleAdminRevenue,
+  handleAdminRevenueButton,
+  handleAdminSetBuilderFee,
+} from './commands/fees.command';
 
 import { log } from '../logger/logger';
 import { tradingService } from '../trading/trading.service';
@@ -54,6 +63,7 @@ import { config as appConfig } from '../config/env';
 import { exchangeAccountService } from '../users/exchange-account.service';
 import { userService } from '../users/user.service';
 import { mainMenuKeyboard } from './keyboards';
+import { normalizeMarketSymbol } from '../utils/format';
 
 export function createBot(): Telegraf<BotContext> {
   const bot = new Telegraf<BotContext>(config.telegram.botToken);
@@ -84,7 +94,16 @@ export function createBot(): Telegraf<BotContext> {
   bot.help(helpCommand);
   bot.command('trade', (ctx) => ctx.scene.enter(SCENE_IDS.TRADE));
   bot.command('positions', positionsCommand);
-  bot.command('close', (ctx) => ctx.scene.enter(SCENE_IDS.CLOSE_POSITION));
+  bot.command('close', (ctx) => {
+    const [, rawMarket, rawPercent] = ctx.message.text.trim().split(/\s+/);
+    if (!rawMarket) return ctx.scene.enter(SCENE_IDS.CLOSE_POSITION);
+
+    const percent = rawPercent === undefined ? 100 : Number(rawPercent);
+    if (!Number.isFinite(percent) || percent <= 0 || percent > 100) {
+      return ctx.reply('Usage: /close <market> [percent]. Example: /close SOL 50');
+    }
+    return ctx.scene.enter(SCENE_IDS.CLOSE_POSITION, { market: normalizeMarketSymbol(rawMarket), percent });
+  });
   bot.command('balance', balanceCommand);
   bot.command('withdraw', (ctx) => ctx.scene.enter(SCENE_IDS.WITHDRAW));
   bot.command('fund', (ctx) => ctx.scene.enter(SCENE_IDS.FUND_PHOENIX));
@@ -105,10 +124,15 @@ export function createBot(): Telegraf<BotContext> {
 
   // Admin commands
   bot.command('admin', adminOnly, adminCommand);
+  bot.command('fees', adminOnly, (ctx) => handleAdminFees(ctx, ctx.message.text.split(/\s+/).slice(1)));
+  bot.command('builder', adminOnly, handleAdminBuilder);
+  bot.command('revenue', adminOnly, handleAdminRevenue);
+  bot.command('setbuilderfee', adminOnly, (ctx) => handleAdminSetBuilderFee(ctx, ctx.message.text.split(/\s+/).slice(1)));
 
   // Reply-keyboard buttons (main menu)
   bot.hears('📈 Trade', (ctx) => ctx.scene.enter(SCENE_IDS.TRADE));
   bot.hears('📊 Positions', positionsCommand);
+  bot.hears('🔴 Close Position', (ctx) => ctx.scene.enter(SCENE_IDS.CLOSE_POSITION));
   bot.hears('💰 Balance', balanceCommand);
   bot.hears('💸 Withdraw', (ctx) => ctx.scene.enter(SCENE_IDS.WITHDRAW));
   bot.hears('➕ Fund Phoenix', (ctx) => ctx.scene.enter(SCENE_IDS.FUND_PHOENIX));
@@ -119,6 +143,15 @@ export function createBot(): Telegraf<BotContext> {
   // Inline keyboard callback handlers
   bot.action(/^markets_page_\d+$/, handleMarketsPagination);
   bot.action(/^dashboard_refresh_\d+$/, refreshDashboard);
+  bot.action(/^close_position\|(.+)\|(\d+(?:\.\d+)?)$/, async (ctx) => {
+    if (!ctx.callbackQuery || !('data' in ctx.callbackQuery)) return;
+    const match = /^close_position\|(.+)\|(\d+(?:\.\d+)?)$/.exec(ctx.callbackQuery.data);
+    if (!match) return;
+    await ctx.answerCbQuery();
+    const percent = Number(match[2]);
+    if (!Number.isFinite(percent) || percent <= 0 || percent > 100) return;
+    return ctx.scene.enter(SCENE_IDS.CLOSE_POSITION, { market: match[1], percent });
+  });
   bot.action('phoenix_register', async (ctx) => {
     await ctx.answerCbQuery();
     if (!ctx.appUserId) return ctx.reply('Please send /start first.');
@@ -156,6 +189,9 @@ export function createBot(): Telegraf<BotContext> {
   bot.action('admin_mode_maintenance', adminOnly, handleAdminModeMaintenance);
   bot.action('admin_mode_emergency', adminOnly, handleAdminModeEmergency);
   bot.action('admin_toggle_phoenix_referral_gate', adminOnly, handleAdminTogglePhoenixReferralGate);
+  bot.action('admin_fees_status', adminOnly, handleAdminFeesButton);
+  bot.action('admin_builder_status', adminOnly, handleAdminBuilderButton);
+  bot.action('admin_revenue', adminOnly, handleAdminRevenueButton);
 
   registerGroupTradeHandlers(bot);
 

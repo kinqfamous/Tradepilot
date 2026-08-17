@@ -10,6 +10,9 @@ import { phoenixReferralService } from '../exchange/phoenix/phoenix-referral.ser
 
 export class ExchangeAccountService {
   async getActiveAccount(userId: number, exchange: string): Promise<ExchangeAccount | null> {
+    if (typeof exchange !== 'string' || exchange.trim().length === 0) {
+      throw new Error('An exchange is required to look up an exchange account.');
+    }
     return prisma.exchangeAccount.findUnique({ where: { userId_exchange: { userId, exchange } } });
   }
 

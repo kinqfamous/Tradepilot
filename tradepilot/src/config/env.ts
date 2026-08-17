@@ -16,6 +16,11 @@ function optional(name: string, fallback: string): string {
   return value && value.trim().length > 0 ? value : fallback;
 }
 
+function optionalOrNull(name: string): string | null {
+  const value = process.env[name];
+  return value && value.trim().length > 0 ? value.trim() : null;
+}
+
 function optionalNumber(name: string, fallback: number): number {
   const value = process.env[name];
   if (!value) return fallback;
@@ -36,11 +41,27 @@ export interface AppConfig {
     jwtSecret: string;
     jwtExpiresIn: string;
   };
-  phoenix: {
-    restUrl: string;
-    wsUrl: string;
-    solanaRpcUrl: string;
-    registrationMinSol: number;
+    phoenix: {
+      restUrl: string;
+      wsUrl: string;
+      solanaRpcUrl: string;
+      registrationMinSol: number;
+  };
+  flight: {
+    /** Public key only - TradePilot never holds or signs with this account's private key.
+     *  Registration and fee withdrawal happen externally via flight.phoenix.trade or the
+     *  one-time scripts/register-phoenix-flight-builder.ts admin tool. These are only the
+     *  INITIAL values - BuilderConfig in the database is the runtime source of truth once
+     *  the bot has booted once (see fee.repository.ts). */
+    builderAuthority: string | null;
+    /** The distinct on-chain trader account address Phoenix derives for the builder authority
+     *  (shown separately on the Flight dashboard, alongside the authority itself). Purely
+     *  informational/reference - never required for order routing, which only needs the
+     *  authority + PDA/subaccount indices. */
+    builderTraderAccount: string | null;
+    builderPdaIndex: number;
+    builderSubaccountIndex: number;
+    builderFeeBps: number;
   };
   defaultExchange: string;
   tradingDefaults: {
@@ -54,6 +75,29 @@ export interface AppConfig {
   };
   logging: { level: string; dir: string };
   queue: { prefix: string };
+}
+
+/**
+ * Loads and format-validates a Solana PUBLIC key from the given env var
+ * name. Intentionally optional at boot: fee collection can stay disabled
+ * (BuilderConfig.builderFeeEnabled = false) until this is set, so a
+ * missing key never blocks the bot from starting - but a present,
+ * malformed one is a real misconfiguration and fails fast rather than
+ * silently routing fees nowhere.
+ */
+function loadOptionalPublicKey(envVarName: string): string | null {
+  const value = optionalOrNull(envVarName);
+  if (!value) return null;
+
+  const isValidBase58PublicKey = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(value);
+  if (!isValidBase58PublicKey) {
+    throw new Error(
+      `${envVarName} is set but is not a valid-looking Solana public key. ` +
+        'This must be the PUBLIC key only - never a private key or seed phrase.',
+    );
+  }
+
+  return value;
 }
 
 function loadConfig(): AppConfig {
@@ -91,6 +135,14 @@ function loadConfig(): AppConfig {
       wsUrl: optional('PHOENIX_WS_URL', 'wss://perp-api.phoenix.trade/v1/ws'),
       solanaRpcUrl: optional('PHOENIX_SOLANA_RPC_URL', 'https://api.mainnet-beta.solana.com'),
       registrationMinSol: optionalNumber('PHOENIX_REGISTRATION_MIN_SOL', 0.04),
+    },
+    flight: {
+      builderAuthority: loadOptionalPublicKey('TRADEPILOT_BUILDER_AUTHORITY'),
+      builderTraderAccount: loadOptionalPublicKey('TRADEPILOT_BUILDER_TRADER_ACCOUNT'),
+      builderPdaIndex: optionalNumber('TRADEPILOT_BUILDER_PDA_INDEX', 0),
+      builderSubaccountIndex: optionalNumber('TRADEPILOT_BUILDER_SUBACCOUNT_INDEX', 0),
+      // Spec default is 5 bps (0.05%); TradePilot's actual configured fee is 8 bps (0.08%).
+      builderFeeBps: optionalNumber('TRADEPILOT_BUILDER_FEE_BPS', 8),
     },
     defaultExchange: optional('DEFAULT_EXCHANGE', 'phoenix'),
     tradingDefaults: {

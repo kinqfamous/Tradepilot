@@ -20,8 +20,18 @@ export const tradeScene = new Scenes.WizardScene<BotContext>(
   SCENE_IDS.TRADE,
   // Step 0: entry -> ask for a ticker (+ optional side)
   async (ctx) => {
-    const preSeeded = ctx.wizard.state as TradeWizardState | undefined;
-    (ctx.wizard.state as TradeWizardState) = { exchange: config.defaultExchange, ...preSeeded };
+    // `scene.enter(id, initialState)` stores its payload on scene.state, not
+    // wizard.state. Preserve that payload and always retain a valid exchange
+    // if a stale/incomplete wizard session is resumed.
+    const preSeeded = ctx.scene.state as Partial<TradeWizardState> | undefined;
+    const existing = ctx.wizard.state as TradeWizardState | undefined;
+    // Keep the same object Telegraf persists in scene.state. Assigning a new
+    // object to wizard.state would lose these fields on the next update.
+    Object.assign(ctx.wizard.state as TradeWizardState, {
+      ...existing,
+      ...preSeeded,
+      exchange: preSeeded?.exchange ?? existing?.exchange ?? config.defaultExchange,
+    });
     if (state(ctx).market && state(ctx).side) {
       await ctx.reply(`*${state(ctx).side} ${state(ctx).market}* — how much collateral (USD) do you want to put in?`, {
         parse_mode: 'Markdown',
@@ -255,15 +265,20 @@ export const tradeScene = new Scenes.WizardScene<BotContext>(
 
     if (data === 'confirm') {
       const s = state(ctx);
+      const exchange = s.exchange ?? config.defaultExchange;
+      if (!s.market || !s.side || !s.collateralUsd || !s.leverage) {
+        await ctx.reply('⚠️ Your trade details expired. Please start the trade again.', mainMenuKeyboard);
+        return ctx.scene.leave();
+      }
       await ctx.reply('⏳ Submitting trade...');
 
       const result = await tradingService.open({
         userId: ctx.appUserId!,
-        exchange: s.exchange!,
-        market: s.market!,
-        side: s.side!,
-        collateralUsd: s.collateralUsd!,
-        leverage: s.leverage!,
+        exchange,
+        market: s.market,
+        side: s.side,
+        collateralUsd: s.collateralUsd,
+        leverage: s.leverage,
         orderType: s.orderType,
         limitPrice: s.limitPrice,
         stopLossPrice: s.stopLossPrice,

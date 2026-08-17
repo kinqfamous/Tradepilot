@@ -2,10 +2,9 @@ import { Markup } from 'telegraf';
 
 export const mainMenuKeyboard = Markup.keyboard([
   ['📈 Trade', '📊 Positions'],
-  ['💰 Balance', '➕ Fund Phoenix'],
-  ['💸 Withdraw'],
-  ['🌐 Markets'],
-  ['⚙️ Settings'],
+  ['🔴 Close Position', '💰 Balance'],
+  ['➕ Fund Phoenix', '💸 Withdraw'],
+  ['🌐 Markets', '⚙️ Settings'],
   ['📜 History'],
 ]).resize();
 
@@ -82,6 +81,9 @@ export function adminMenuKeyboard(phoenixReferralCodeRequired: boolean) {
   return Markup.inlineKeyboard([
     [Markup.button.callback('📊 Stats', 'admin_stats')],
     [Markup.button.callback('📢 Broadcast', 'admin_broadcast')],
+    [Markup.button.callback('💸 Builder Fee Status', 'admin_fees_status')],
+    [Markup.button.callback('✈️ Flight Builder Status', 'admin_builder_status')],
+    [Markup.button.callback('📈 Builder Revenue', 'admin_revenue')],
     [
       Markup.button.callback(
         `🔐 Phoenix referral-code gate: ${phoenixReferralCodeRequired ? 'ON' : 'OFF'}`,

@@ -21,7 +21,7 @@ export const fundPhoenixScene = new Scenes.WizardScene<BotContext>(
     if (!ctx.appUserId) return ctx.scene.leave();
     const wallet = await accountBalanceService.getWalletBalances(ctx.appUserId, config.defaultExchange);
     await ctx.reply(
-      `➕ *Fund Phoenix*\n\nWallet USDC available: *${wallet.usdc.toFixed(6)}*\n\nEnter the USDC amount to transfer from your linked wallet to your Phoenix account.`,
+      `➕ *Fund Phoenix*\n\nWallet USDC available: *${wallet.usdc.toFixed(6)}*\n\nEnter the USDC amount to deposit from your linked wallet. It will become PhUSD collateral in your Phoenix account.`,
       { parse_mode: 'Markdown' },
     );
     return ctx.wizard.next();
@@ -33,7 +33,7 @@ export const fundPhoenixScene = new Scenes.WizardScene<BotContext>(
     if (!amount) return ctx.reply('Enter a positive USDC amount with no more than 6 decimal places.');
     state(ctx).amount = amount;
     await ctx.reply(
-      `🔍 *Confirm Phoenix funding*\n\nFrom: Your linked wallet\nTo: Your Phoenix account\nAmount: *${amount} USDC*`,
+      `🔍 *Confirm Phoenix funding*\n\nFrom: Your linked wallet (USDC)\nTo: Your Phoenix account (PhUSD collateral)\nAmount: *${amount} USDC*`,
       { parse_mode: 'Markdown', ...confirmCancelKeyboard },
     );
     return ctx.wizard.next();
@@ -47,7 +47,7 @@ export const fundPhoenixScene = new Scenes.WizardScene<BotContext>(
     try {
       const result = await accountBalanceService.fundPhoenix(ctx.appUserId!, config.defaultExchange, state(ctx).amount!);
       await ctx.reply(
-        `✅ Phoenix account funded.\n\nAmount: *${state(ctx).amount} USDC*\nTransaction: \`${result.transactionSignature}\``,
+        `✅ Phoenix account funded.\n\nDeposited: *${state(ctx).amount} USDC*\nReceived: *PhUSD collateral*\nTransaction: \`${result.transactionSignature}\``,
         { parse_mode: 'Markdown', ...mainMenuKeyboard },
       );
     } catch (error) {

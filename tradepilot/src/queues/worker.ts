@@ -7,6 +7,7 @@ import { NotificationJobData } from './notification.queue';
 import { prisma } from '../database/prisma';
 import { notificationService } from '../notifications/notification.service';
 import { fileLogger } from '../logger/logger';
+import { builderFeeService } from '../fees/builder-fee.service';
 
 const telegram = new Telegraf(config.telegram.botToken).telegram;
 
@@ -36,5 +37,27 @@ worker.on('failed', (job, err) => {
 
 fileLogger.info('TradePilot notification worker started.');
 
-process.once('SIGINT', () => worker.close());
-process.once('SIGTERM', () => worker.close());
+// A submitted Flight transaction whose fee cannot be conclusively reconciled
+// must never remain pending forever or silently appear as revenue.
+const reconcileFees = async () => {
+  try {
+    const result = await builderFeeService.reconcile();
+    if (result.flaggedCount > 0) {
+      fileLogger.warn({ flaggedCount: result.flaggedCount }, 'Flight fee events require reconciliation');
+    }
+  } catch (error) {
+    fileLogger.error({ error }, 'Flight fee reconciliation failed');
+  }
+};
+void reconcileFees();
+const feeReconciliationTimer = setInterval(() => void reconcileFees(), 5 * 60_000);
+feeReconciliationTimer.unref();
+
+process.once('SIGINT', () => {
+  clearInterval(feeReconciliationTimer);
+  return worker.close();
+});
+process.once('SIGTERM', () => {
+  clearInterval(feeReconciliationTimer);
+  return worker.close();
+});

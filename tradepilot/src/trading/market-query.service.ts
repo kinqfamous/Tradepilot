@@ -4,7 +4,13 @@ import { MarketInfo, AccountBalance, ExchangePosition } from '../types/exchange.
 
 export class MarketQueryService {
   async listMarkets(exchange: string, forceRefresh = false): Promise<MarketInfo[]> {
-    return exchangeRegistry.get(exchange).market.listMarkets(forceRefresh);
+    void forceRefresh;
+    return exchangeRegistry.get(exchange).market.listMarkets();
+  }
+
+  async getMarket(exchange: string, symbol: string): Promise<MarketInfo | null> {
+    const markets = await this.listMarkets(exchange);
+    return markets.find((market) => market.symbol === symbol) ?? null;
   }
 
   /** Resolves free-form ticker text against the real market list for an exchange. */
