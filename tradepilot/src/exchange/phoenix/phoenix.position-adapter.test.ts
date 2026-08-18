@@ -23,7 +23,8 @@ describe('PhoenixPositionAdapter', () => {
         .mockResolvedValueOnce([{ symbol: 'SOL-PERP', baseLotsDecimals: 3 }])
         .mockResolvedValueOnce({ markets: [{ symbol: 'SOL-PERP', mark_price: 150 }] }),
     };
-    const adapter = new PhoenixPositionAdapter(client as any);
+    const liquidationReader = { getLiquidationPrice: vi.fn().mockResolvedValue(146.12) };
+    const adapter = new PhoenixPositionAdapter(client as any, liquidationReader);
 
     const positions = await adapter.getOpenPositions({ walletAddress: 'wallet' });
 
@@ -36,6 +37,8 @@ describe('PhoenixPositionAdapter', () => {
       markPrice: 150,
     });
     expect(positions[0].unrealizedPnl).toBeCloseTo(5.278, 6);
+    expect(positions[0].liquidationPrice).toBe(146.12);
+    expect(liquidationReader.getLiquidationPrice).toHaveBeenCalledWith('wallet', 0, 'SOL-PERP');
   });
 
   it('uses basePositionUnits directly when the API supplies it', async () => {
@@ -59,10 +62,27 @@ describe('PhoenixPositionAdapter', () => {
         .mockResolvedValueOnce([{ symbol: 'SOL-PERP', baseLotsDecimals: 6 }])
         .mockResolvedValueOnce({ markets: [{ symbol: 'SOL-PERP', mark_price: 150 }] }),
     };
-    const adapter = new PhoenixPositionAdapter(client as any);
+    const adapter = new PhoenixPositionAdapter(client as any, { getLiquidationPrice: vi.fn().mockResolvedValue(null) });
 
     const positions = await adapter.getOpenPositions({ walletAddress: 'wallet' });
 
     expect(positions[0]).toMatchObject({ size: 0.026, side: 'SHORT' });
+  });
+
+  it('does not substitute an estimate when Phoenix does not return a liquidation price', async () => {
+    const client = {
+      get: vi
+        .fn()
+        .mockResolvedValueOnce({
+          snapshot: { subaccounts: [{ collateral: '1000000', positions: [{ positionSequenceNumber: '1', symbol: 'SOL-PERP', basePositionLots: '1000', entryPriceUsd: '100', accumulatedFundingQuoteLots: '0' }] }] },
+        })
+        .mockResolvedValueOnce([{ symbol: 'SOL-PERP', baseLotsDecimals: 3 }])
+        .mockResolvedValueOnce({ markets: [{ symbol: 'SOL-PERP', mark_price: 110 }] }),
+    };
+    const adapter = new PhoenixPositionAdapter(client as any, { getLiquidationPrice: vi.fn().mockResolvedValue(null) });
+
+    await expect(adapter.getOpenPositions({ walletAddress: 'wallet' })).resolves.toMatchObject([
+      { liquidationPrice: null },
+    ]);
   });
 });

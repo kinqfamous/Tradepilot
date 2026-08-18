@@ -1,8 +1,9 @@
 import { Markup } from 'telegraf';
 
 export const mainMenuKeyboard = Markup.keyboard([
+  ['🏠 Start'],
   ['📈 Trade', '📊 Positions'],
-  ['🔴 Close Position', '💰 Balance'],
+  ['💰 Balance'],
   ['➕ Fund Phoenix', '💸 Withdraw'],
   ['🌐 Markets', '⚙️ Settings'],
   ['📜 History'],
@@ -17,6 +18,7 @@ export const withdrawalSourceKeyboard = Markup.inlineKeyboard([
 export function dashboardKeyboard(userId: number) {
   return Markup.inlineKeyboard([
     [Markup.button.callback('🔄 Refresh', `dashboard_refresh_${userId}`)],
+    [Markup.button.callback('📈 View PnL Cards', `dashboard_pnl_${userId}`)],
   ]);
 }
 

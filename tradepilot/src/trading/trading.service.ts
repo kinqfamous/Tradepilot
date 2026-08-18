@@ -11,6 +11,7 @@ import { PlaceOrderResult } from '../types/exchange.types';
 import { walletKeyService } from '../exchange/wallet-key.service';
 import { createPhoenixConnection } from '../exchange/phoenix/phoenix.order-adapter';
 import { phoenixFlightExecutionService } from '../exchange/phoenix/phoenix-flight-execution.service';
+import { formatSignedPnlPercent } from '../utils/format';
 
 export interface OpenPositionRequest {
   userId: number;
@@ -173,6 +174,49 @@ export class TradingService {
         margin: request.collateralUsd,
       });
 
+      // Flight submits the entry and its optional protection triggers in one
+      // confirmed transaction. Persist those trigger prices so the dashboard
+      // can show the protections currently attached to this position.
+      const protectionSide = request.side === 'LONG' ? 'SELL' : 'BUY';
+      if (request.stopLossPrice !== undefined) {
+        await tradingRepository.createOrder({
+          userId: request.userId,
+          exchangeAccountId: account.id,
+          positionId: position.id,
+          exchange: request.exchange,
+          market: request.market,
+          type: 'STOP_LOSS',
+          side: protectionSide,
+          status: 'SUBMITTED',
+          size: baseUnits,
+          triggerPrice: request.stopLossPrice,
+          leverage,
+          slippageBps,
+          exchangeOrderId: execResult.signature,
+          txSignature: execResult.signature,
+          idempotencyKey: `${idempotencyKey}-sl`,
+        });
+      }
+      if (request.takeProfitPrice !== undefined) {
+        await tradingRepository.createOrder({
+          userId: request.userId,
+          exchangeAccountId: account.id,
+          positionId: position.id,
+          exchange: request.exchange,
+          market: request.market,
+          type: 'TAKE_PROFIT',
+          side: protectionSide,
+          status: 'SUBMITTED',
+          size: baseUnits,
+          triggerPrice: request.takeProfitPrice,
+          leverage,
+          slippageBps,
+          exchangeOrderId: execResult.signature,
+          txSignature: execResult.signature,
+          idempotencyKey: `${idempotencyKey}-tp`,
+        });
+      }
+
       await tradingRepository.createTrade({
         userId: request.userId,
         exchangeAccountId: account.id,
@@ -231,6 +275,13 @@ export class TradingService {
       return { externalOrderId: '', status: 'REJECTED', errorMessage: `Could not determine a price for ${request.market}.` };
     }
     const notionalUsd = baseUnitsToClose * referencePrice;
+    const realizedPnl = exchangePosition.entryPrice > 0
+      ? (referencePrice - exchangePosition.entryPrice) *
+        (exchangePosition.side === 'LONG' ? baseUnitsToClose : -baseUnitsToClose)
+      : undefined;
+    const realizedPnlPercent = realizedPnl !== undefined && exchangePosition.margin > 0
+      ? (realizedPnl / (exchangePosition.margin * request.percent / 100)) * 100
+      : undefined;
 
     try {
       const traderKeypair = await walletKeyService.getKeypair(account.id);
@@ -254,22 +305,53 @@ export class TradingService {
         return { externalOrderId: '', status: 'REJECTED', errorMessage: execResult.errorMessage };
       }
 
+      const cumulativePnl = dbPosition
+        ? Number(dbPosition.realizedPnl) + (realizedPnl ?? 0)
+        : 0;
       if (dbPosition && request.percent === 100) {
-        await tradingRepository.closePosition(dbPosition.id, 0);
+        await tradingRepository.closePosition(dbPosition.id, cumulativePnl);
       } else if (dbPosition) {
-        await tradingRepository.updatePositionSize(dbPosition.id, Math.max(0, Number(dbPosition.size) - baseUnitsToClose));
+        await tradingRepository.updatePositionSize(
+          dbPosition.id,
+          Math.max(0, Number(dbPosition.size) - baseUnitsToClose),
+          cumulativePnl,
+        );
       }
+
+      // A close is its own trade event. Its dollar PnL belongs in history,
+      // while the immediate close confirmation deliberately shows a percent.
+      await tradingRepository.createTrade({
+        userId: request.userId,
+        exchangeAccountId: account.id,
+        positionId: dbPosition?.id,
+        exchange: request.exchange,
+        market: request.market,
+        side: closingSide === 'buy' ? 'BUY' : 'SELL',
+        price: referencePrice,
+        size: baseUnitsToClose,
+        realizedPnl: realizedPnl ?? 0,
+        txSignature: execResult.signature,
+      });
 
       await notificationService.notify(
         request.userId,
         'TRADE_FILLED',
-        `✅ Closed ${request.percent}% of ${request.market}.`,
+        `✅ Closed ${request.percent}% of ${request.market}.` +
+          (realizedPnlPercent === undefined ? '' : `\nRealized PnL: ${formatSignedPnlPercent(realizedPnlPercent)}`),
       );
 
       return {
         externalOrderId: execResult.signature ?? '',
         status: 'FILLED',
         txSignature: execResult.signature,
+        realizedPnl,
+        realizedPnlPercent,
+        closedMargin: exchangePosition.margin * request.percent / 100,
+        entryPrice: exchangePosition.entryPrice,
+        closePrice: referencePrice,
+        positionSide: exchangePosition.side,
+        leverage: exchangePosition.leverage,
+        closedSize: baseUnitsToClose,
       };
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);

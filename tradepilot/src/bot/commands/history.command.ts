@@ -1,6 +1,6 @@
 import { BotContext } from '../../types/bot.types';
 import { tradingRepository } from '../../trading/trading.repository';
-import { formatUsd } from '../../utils/format';
+import { formatSignedPnl, formatUsd } from '../../utils/format';
 
 export async function historyCommand(ctx: BotContext): Promise<void> {
   if (!ctx.appUserId) {
@@ -19,7 +19,9 @@ export async function historyCommand(ctx: BotContext): Promise<void> {
     .map(
       (t) =>
         `${t.side === 'BUY' ? '🟢' : '🔴'} *${t.market}* - ${t.side} ${Number(t.size).toFixed(4)} @ ${Number(t.price).toFixed(4)}\n` +
-        `Fee: ${formatUsd(Number(t.feePaid))} | ${t.executedAt.toLocaleString()}`,
+        `Fee: ${formatUsd(Number(t.feePaid))}` +
+        (t.orderId === null ? ` | Realized PnL: ${formatSignedPnl(Number(t.realizedPnl))}` : '') +
+        ` | ${t.executedAt.toLocaleString()}`,
     )
     .join('\n\n');
 

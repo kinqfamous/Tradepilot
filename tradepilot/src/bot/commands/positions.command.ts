@@ -1,7 +1,7 @@
 import { BotContext } from '../../types/bot.types';
 import { marketQueryService } from '../../trading/market-query.service';
 import { config } from '../../config/env';
-import { formatPercent, formatUsd } from '../../utils/format';
+import { formatNumber, formatPercent, formatUsd } from '../../utils/format';
 import { Markup } from 'telegraf';
 
 export async function positionsCommand(ctx: BotContext): Promise<void> {
@@ -26,7 +26,7 @@ export async function positionsCommand(ctx: BotContext): Promise<void> {
           `Entry: ${p.entryPrice} | Mark: ${p.markPrice}\n` +
           `Size: ${p.size} | Margin: ${formatUsd(p.margin)}\n` +
           `PnL: ${formatUsd(p.unrealizedPnl)} (${formatPercent(p.roePercent)})\n` +
-          `Liq. Price: ${p.liquidationPrice ?? 'N/A'}\n` +
+          `Liq. Price: ${p.liquidationPrice === null ? 'Unavailable' : `$${formatNumber(p.liquidationPrice)}`}\n` +
           `Funding Paid: ${formatUsd(p.fundingPaid)}`
         );
       })

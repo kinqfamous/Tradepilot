@@ -37,6 +37,7 @@ import {
 } from './commands/settings.command';
 import { registerGroupTradeHandlers } from './group-trade.handler';
 import { historyCommand } from './commands/history.command';
+import { pnlCommand } from './commands/pnl.command';
 import {
   adminCommand,
   handleAdminStats,
@@ -63,7 +64,7 @@ import { config as appConfig } from '../config/env';
 import { exchangeAccountService } from '../users/exchange-account.service';
 import { userService } from '../users/user.service';
 import { mainMenuKeyboard } from './keyboards';
-import { normalizeMarketSymbol } from '../utils/format';
+import { formatSignedPnlPercent, normalizeMarketSymbol } from '../utils/format';
 
 export function createBot(): Telegraf<BotContext> {
   const bot = new Telegraf<BotContext>(config.telegram.botToken);
@@ -110,12 +111,18 @@ export function createBot(): Telegraf<BotContext> {
   bot.command('markets', marketsCommand);
   bot.command('settings', settingsCommand);
   bot.command('history', historyCommand);
+  bot.command('pnl', pnlCommand);
   bot.command('link', (ctx) => ctx.scene.enter(SCENE_IDS.LINK_ACCOUNT));
   bot.command('closeall', async (ctx) => {
     if (!ctx.appUserId) return ctx.reply('Please send /start first.');
     await ctx.reply('⏳ Closing all positions...');
     const results = await tradingService.closeAll(ctx.appUserId, appConfig.defaultExchange);
-    await ctx.reply(`✅ Closed ${results.filter((r) => r.status !== 'REJECTED').length}/${results.length} positions.`);
+    const realizedPnl = results.reduce((total, result) => total + (result.realizedPnl ?? 0), 0);
+    const closedMargin = results.reduce((total, result) => total + (result.closedMargin ?? 0), 0);
+    await ctx.reply(
+      `✅ Closed ${results.filter((r) => r.status !== 'REJECTED').length}/${results.length} positions.\n` +
+      (closedMargin > 0 ? `Realized PnL: ${formatSignedPnlPercent((realizedPnl / closedMargin) * 100)}` : ''),
+    );
   });
   bot.command('cancel', async (ctx) => {
     await ctx.scene.leave();
@@ -130,9 +137,9 @@ export function createBot(): Telegraf<BotContext> {
   bot.command('setbuilderfee', adminOnly, (ctx) => handleAdminSetBuilderFee(ctx, ctx.message.text.split(/\s+/).slice(1)));
 
   // Reply-keyboard buttons (main menu)
+  bot.hears('🏠 Start', startCommand);
   bot.hears('📈 Trade', (ctx) => ctx.scene.enter(SCENE_IDS.TRADE));
   bot.hears('📊 Positions', positionsCommand);
-  bot.hears('🔴 Close Position', (ctx) => ctx.scene.enter(SCENE_IDS.CLOSE_POSITION));
   bot.hears('💰 Balance', balanceCommand);
   bot.hears('💸 Withdraw', (ctx) => ctx.scene.enter(SCENE_IDS.WITHDRAW));
   bot.hears('➕ Fund Phoenix', (ctx) => ctx.scene.enter(SCENE_IDS.FUND_PHOENIX));
@@ -143,6 +150,16 @@ export function createBot(): Telegraf<BotContext> {
   // Inline keyboard callback handlers
   bot.action(/^markets_page_\d+$/, handleMarketsPagination);
   bot.action(/^dashboard_refresh_\d+$/, refreshDashboard);
+  bot.action(/^dashboard_pnl_\d+$/, async (ctx) => {
+    if (!ctx.appUserId || !ctx.callbackQuery || !('data' in ctx.callbackQuery)) return;
+    const match = /^dashboard_pnl_(\d+)$/.exec(ctx.callbackQuery.data);
+    if (!match || Number(match[1]) !== ctx.appUserId) {
+      await ctx.answerCbQuery('This dashboard belongs to another user.', { show_alert: true });
+      return;
+    }
+    await ctx.answerCbQuery();
+    return pnlCommand(ctx);
+  });
   bot.action(/^close_position\|(.+)\|(\d+(?:\.\d+)?)$/, async (ctx) => {
     if (!ctx.callbackQuery || !('data' in ctx.callbackQuery)) return;
     const match = /^close_position\|(.+)\|(\d+(?:\.\d+)?)$/.exec(ctx.callbackQuery.data);

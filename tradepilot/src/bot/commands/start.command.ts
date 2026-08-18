@@ -7,10 +7,11 @@ import { SCENE_IDS } from '../../constants';
 import { dashboardKeyboard, phoenixRegistrationKeyboard } from '../keyboards';
 import { phoenixReferralService } from '../../exchange/phoenix/phoenix-referral.service';
 import { marketQueryService } from '../../trading/market-query.service';
-import { formatUsd, shortenAddress } from '../../utils/format';
+import { formatNumber, formatUsd } from '../../utils/format';
 import { MarketInfo } from '../../types/exchange.types';
 import { parseGroupTradeDeepLink } from '../group-trade.util';
 import { accountBalanceService } from '../../users/account-balance.service';
+import { tradingRepository } from '../../trading/trading.repository';
 
 export async function startCommand(ctx: BotContext): Promise<void> {
   const fromId = ctx.from?.id;
@@ -99,11 +100,12 @@ export async function refreshDashboard(ctx: BotContext): Promise<void> {
 }
 
 async function buildDashboard(userId: number, walletAddress: string, forceMarketRefresh = false): Promise<string> {
-  const [balancesResult, positionsResult, walletResult, marketsResult] = await Promise.allSettled([
+  const [balancesResult, positionsResult, walletResult, marketsResult, protectionsResult] = await Promise.allSettled([
     marketQueryService.getBalances(userId, config.defaultExchange),
     marketQueryService.getOpenPositions(userId, config.defaultExchange),
     accountBalanceService.getWalletBalances(userId, config.defaultExchange),
     marketQueryService.listMarkets(config.defaultExchange, forceMarketRefresh),
+    tradingRepository.listActiveProtections(userId, config.defaultExchange),
   ]);
 
   const phoenixPhusd = balancesResult.status === 'fulfilled'
@@ -115,19 +117,21 @@ async function buildDashboard(userId: number, walletAddress: string, forceMarket
     : null;
   const openTrades = positionsResult.status === 'fulfilled' ? positionsResult.value : null;
   const markets = marketsResult.status === 'fulfilled' ? marketsResult.value : null;
+  const protections = protectionsResult.status === 'fulfilled' ? protectionsResult.value : [];
 
   return [
     '👋 *Welcome back to TradePilot*',
     '',
     '💼 *Your Wallet Account*',
-    `Address: \`${shortenAddress(walletAddress)}\``,
+    `Address: \`${walletAddress}\``,
     `SOL: ${wallet ? wallet.sol.toFixed(6) : 'Unavailable'}`,
     `USDC: ${wallet ? formatUsd(wallet.usdc) : 'Unavailable'}`,
     '',
     '🏦 *Your Phoenix Account*',
     `PhUSD Collateral: ${phoenixPhusd === null ? 'Unavailable' : formatUsd(phoenixPhusd)}`,
     `Open PnL: ${pnl === null ? 'Unavailable' : formatSignedUsd(pnl)}`,
-    `Open Trades: ${formatOpenTrades(openTrades)}`,
+    '📊 *Open Positions*',
+    formatOpenTrades(openTrades, protections),
     '',
     '📈 *Top 3 Market Gainers — 24h*',
     formatMarketSection(markets, 'gainers'),
@@ -144,12 +148,26 @@ function formatSignedUsd(amount: number): string {
   return `${emoji} ${amount >= 0 ? '+' : '-'}${formatUsd(Math.abs(amount))}`;
 }
 
-function formatOpenTrades(positions: Awaited<ReturnType<typeof marketQueryService.getOpenPositions>> | null): string {
+function formatOpenTrades(
+  positions: Awaited<ReturnType<typeof marketQueryService.getOpenPositions>> | null,
+  protections: Awaited<ReturnType<typeof tradingRepository.listActiveProtections>>,
+): string {
   if (positions === null) return 'Unavailable';
   if (positions.length === 0) return 'None';
   return positions
-    .map((position) => `${position.side === 'LONG' ? '🟢 Long' : '🔴 Short'} ${position.market}`)
-    .join(', ');
+    .map((position) => {
+      const protection = protections.filter((order) => order.market === position.market);
+      const stopLoss = protection.find((order) => order.type === 'STOP_LOSS')?.triggerPrice;
+      const takeProfit = protection.find((order) => order.type === 'TAKE_PROFIT')?.triggerPrice;
+      return [
+        `${position.side === 'LONG' ? '🟢 Long' : '🔴 Short'} *${position.market}*`,
+        `Entry: $${formatNumber(position.entryPrice)} | Size: ${formatNumber(position.size)}`,
+        `Liq. Price: ${position.liquidationPrice === null ? 'Unavailable' : `$${formatNumber(position.liquidationPrice)}`}`,
+        `SL: ${stopLoss === null || stopLoss === undefined ? 'None' : `$${formatNumber(Number(stopLoss))}`}`,
+        `TP: ${takeProfit === null || takeProfit === undefined ? 'None' : `$${formatNumber(Number(takeProfit))}`}`,
+      ].join(' | ');
+    })
+    .join('\n');
 }
 
 function formatMarketSection(markets: MarketInfo[] | null, kind: 'gainers' | 'losers'): string {

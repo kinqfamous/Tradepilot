@@ -73,6 +73,15 @@ export interface PlaceOrderResult {
   status: 'SUBMITTED' | 'FILLED' | 'REJECTED';
   txSignature?: string;
   fillPrice?: number;
+  /** Realized PnL when this result represents a filled position close. */
+  realizedPnl?: number;
+  realizedPnlPercent?: number;
+  closedMargin?: number;
+  entryPrice?: number;
+  closePrice?: number;
+  positionSide?: PositionSide;
+  leverage?: number;
+  closedSize?: number;
   errorMessage?: string;
 }
 

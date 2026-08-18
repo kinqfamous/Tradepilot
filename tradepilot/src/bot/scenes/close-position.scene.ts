@@ -3,9 +3,11 @@ import { BotContext, ClosePositionWizardState } from '../../types/bot.types';
 import { SCENE_IDS } from '../../constants';
 import { tradingService } from '../../trading/trading.service';
 import { marketQueryService } from '../../trading/market-query.service';
-import { normalizeMarketSymbol } from '../../utils/format';
+import { formatNumber, formatSignedPnlPercent, normalizeMarketSymbol } from '../../utils/format';
 import { closePercentKeyboard, confirmCancelKeyboard, mainMenuKeyboard } from '../keyboards';
 import { config } from '../../config/env';
+import { Input } from 'telegraf';
+import { pnlCardService } from '../../pnl/pnl-card.service';
 
 function state(ctx: BotContext): ClosePositionWizardState {
   return ctx.wizard.state as ClosePositionWizardState;
@@ -156,8 +158,32 @@ export const closePositionScene = new Scenes.WizardScene<BotContext>(
       if (result.status === 'REJECTED') {
         await ctx.reply(`❌ Close failed: ${result.errorMessage}`, mainMenuKeyboard);
       } else {
+        if (
+          result.entryPrice !== undefined &&
+          result.realizedPnl !== undefined &&
+          result.realizedPnlPercent !== undefined &&
+          result.closePrice !== undefined &&
+          result.positionSide !== undefined &&
+          result.leverage !== undefined &&
+          result.closedSize !== undefined
+        ) {
+          const card = pnlCardService.render({
+            market: s.market,
+            side: result.positionSide,
+            leverage: result.leverage,
+            size: result.closedSize,
+            pnlPercent: result.realizedPnlPercent,
+            entryPrice: result.entryPrice,
+            exitPrice: result.closePrice,
+            status: 'CLOSED',
+          });
+          await ctx.replyWithPhoto(Input.fromBuffer(card, `tradepilot-${s.market}-closed-pnl.png`));
+        }
         await ctx.reply(
-          `✅ Closed ${s.percent}% of *${s.market}*.\n\n` + (result.txSignature ? `Tx: \`${result.txSignature}\`` : ''),
+          `✅ Closed ${s.percent}% of *${s.market}*.\n` +
+            (result.entryPrice === undefined ? '' : `Entry Price: $${formatNumber(result.entryPrice)}\n`) +
+            (result.realizedPnlPercent === undefined ? '' : `\nRealized PnL: ${formatSignedPnlPercent(result.realizedPnlPercent)}\n`) +
+            (result.txSignature ? `\nTx: \`${result.txSignature}\`` : ''),
           { parse_mode: 'Markdown', ...mainMenuKeyboard },
         );
       }

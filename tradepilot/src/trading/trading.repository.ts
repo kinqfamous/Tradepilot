@@ -25,8 +25,8 @@ export class TradingRepository {
     });
   }
 
-  async updatePositionSize(id: number, size: number): Promise<Position> {
-    return prisma.position.update({ where: { id }, data: { size } });
+  async updatePositionSize(id: number, size: number, realizedPnl: number): Promise<Position> {
+    return prisma.position.update({ where: { id }, data: { size, realizedPnl } });
   }
 
   async findOpenPosition(userId: number, exchange: string, market: string): Promise<Position | null> {
@@ -37,6 +37,18 @@ export class TradingRepository {
 
   async listOpenPositions(userId: number): Promise<Position[]> {
     return prisma.position.findMany({ where: { userId, status: 'OPEN' }, orderBy: { openedAt: 'desc' } });
+  }
+
+  async listActiveProtections(userId: number, exchange: string): Promise<Order[]> {
+    return prisma.order.findMany({
+      where: {
+        userId,
+        exchange,
+        type: { in: ['STOP_LOSS', 'TAKE_PROFIT'] },
+        status: { in: ['PENDING', 'SUBMITTED', 'PARTIALLY_FILLED'] },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
   }
 
   async listRecentTrades(userId: number, limit = 10) {

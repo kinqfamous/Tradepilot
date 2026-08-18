@@ -7,6 +7,19 @@ export function formatUsd(amount: number): string {
   return `$${amount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
+/** Formats PnL with an explicit sign and the color convention used by the bot. */
+export function formatSignedPnl(amount: number): string {
+  const emoji = amount >= 0 ? '🟢' : '🔴';
+  const sign = amount >= 0 ? '+' : '-';
+  return `${emoji} ${sign}${formatUsd(Math.abs(amount))}`;
+}
+
+export function formatSignedPnlPercent(percent: number): string {
+  const emoji = percent >= 0 ? '🟢' : '🔴';
+  const sign = percent >= 0 ? '+' : '-';
+  return `${emoji} ${sign}${Math.abs(percent).toFixed(2)}%`;
+}
+
 export function formatNumber(amount: number, maxFractionDigits = 4): string {
   return amount.toLocaleString('en-US', { maximumFractionDigits: maxFractionDigits });
 }
