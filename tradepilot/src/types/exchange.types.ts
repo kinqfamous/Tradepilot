@@ -1,6 +1,7 @@
 export type PositionSide = 'LONG' | 'SHORT';
 export type OrderSide = 'BUY' | 'SELL';
 export type OrderType = 'MARKET' | 'LIMIT' | 'STOP_LOSS' | 'TAKE_PROFIT';
+export type MarginMode = 'CROSS' | 'ISOLATED';
 
 export interface ExchangeCredential {
   walletAddress: string;
@@ -52,6 +53,8 @@ export interface ExchangePosition {
   unrealizedPnl: number;
   roePercent: number;
   fundingPaid: number;
+  /** The actual Phoenix subaccount type that holds this position. */
+  marginMode: MarginMode;
 }
 
 export interface PlaceOrderParams {

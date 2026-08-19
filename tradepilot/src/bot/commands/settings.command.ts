@@ -5,6 +5,7 @@ import { BotContext } from '../../types/bot.types';
 import { settingsMenuKeyboard } from '../keyboards';
 import { settingsService } from '../../settings/settings.service';
 import { SCENE_IDS } from '../../constants';
+import { Markup } from 'telegraf';
 
 export async function settingsCommand(ctx: BotContext): Promise<void> {
   const settings = await settingsService.get(ctx.appUserId!);
@@ -14,6 +15,7 @@ export async function settingsCommand(ctx: BotContext): Promise<void> {
     `Default Group-Trade Amount: $${settings.defaultCollateralUsd}\n` +
     `Default Slippage: ${settings.defaultSlippageBps} bps\n` +
     `Default Order Type: ${settings.defaultOrderType}\n` +
+    `Default Margin Mode: ${(settings as any).defaultMarginMode ?? 'CROSS'}\n` +
     `Language: ${settings.language}\n` +
     `Timezone: ${settings.timezone}\n` +
     `Notifications: ${settings.notificationsOn ? 'On' : 'Off'}\n` +
@@ -33,7 +35,39 @@ export async function handleSettingsSlippage(ctx: BotContext): Promise<void> {
 }
 export async function handleSettingsOrderType(ctx: BotContext): Promise<void> {
   await ctx.answerCbQuery();
-  await ctx.scene.enter(SCENE_IDS.SETTINGS, { field: 'orderType' });
+  await ctx.reply(
+    '📋 Choose your default order type:',
+    Markup.inlineKeyboard([
+      [Markup.button.callback('Market', 'settings_order_type:MARKET')],
+      [Markup.button.callback('Limit', 'settings_order_type:LIMIT')],
+    ]),
+  );
+}
+export async function handleSettingsMarginMode(ctx: BotContext): Promise<void> {
+  await ctx.answerCbQuery();
+  await ctx.reply(
+    '🧮 Choose your default margin mode:',
+    Markup.inlineKeyboard([
+      [Markup.button.callback('Cross', 'settings_margin_mode:CROSS')],
+      [Markup.button.callback('Isolated', 'settings_margin_mode:ISOLATED')],
+    ]),
+  );
+}
+export async function handleSettingsOrderTypeChoice(ctx: BotContext): Promise<void> {
+  const data = ctx.callbackQuery && 'data' in ctx.callbackQuery ? ctx.callbackQuery.data : '';
+  const orderType = data.split(':')[1];
+  if (orderType !== 'MARKET' && orderType !== 'LIMIT') return;
+  await ctx.answerCbQuery();
+  const updated = await settingsService.setDefaultOrderType(ctx.appUserId!, orderType);
+  await ctx.reply(`✅ Default order type set to ${updated.defaultOrderType}.`);
+}
+export async function handleSettingsMarginModeChoice(ctx: BotContext): Promise<void> {
+  const data = ctx.callbackQuery && 'data' in ctx.callbackQuery ? ctx.callbackQuery.data : '';
+  const marginMode = data.split(':')[1];
+  if (marginMode !== 'CROSS' && marginMode !== 'ISOLATED') return;
+  await ctx.answerCbQuery();
+  await settingsService.setDefaultMarginMode(ctx.appUserId!, marginMode);
+  await ctx.reply(`✅ Default margin mode set to ${marginMode}.`);
 }
 export async function handleSettingsLanguage(ctx: BotContext): Promise<void> {
   await ctx.answerCbQuery();

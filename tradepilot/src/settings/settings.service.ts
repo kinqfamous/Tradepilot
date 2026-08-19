@@ -1,5 +1,6 @@
 import { prisma } from '../database/prisma';
 import { UserSettings, OrderType, Prisma } from '@prisma/client';
+import { MarginMode } from '../types/exchange.types';
 import { MAX_LEVERAGE_HARD_CAP, MIN_LEVERAGE } from '../constants';
 import { log } from '../logger/logger';
 
@@ -29,6 +30,15 @@ export class SettingsService {
 
   async setDefaultOrderType(userId: number, orderType: OrderType): Promise<UserSettings> {
     return prisma.userSettings.update({ where: { userId }, data: { defaultOrderType: orderType } });
+  }
+
+  async setDefaultMarginMode(userId: number, marginMode: MarginMode): Promise<UserSettings> {
+    // Cast keeps source builds working until `prisma generate` runs for the
+    // new migration, while preserving the database enum at runtime.
+    return prisma.userSettings.update({
+      where: { userId },
+      data: { defaultMarginMode: marginMode } as any,
+    });
   }
 
   async setLanguage(userId: number, language: string): Promise<UserSettings> {

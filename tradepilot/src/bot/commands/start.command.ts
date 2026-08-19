@@ -161,6 +161,7 @@ function formatOpenTrades(
       const takeProfit = protection.find((order) => order.type === 'TAKE_PROFIT')?.triggerPrice;
       return [
         `${position.side === 'LONG' ? '🟢 Long' : '🔴 Short'} *${position.market}*`,
+        `Margin: ${position.marginMode === 'ISOLATED' ? 'Isolated' : 'Cross'}`,
         `Entry: $${formatNumber(position.entryPrice)} | Size: ${formatNumber(position.size)}`,
         `Liq. Price: ${position.liquidationPrice === null ? 'Unavailable' : `$${formatNumber(position.liquidationPrice)}`}`,
         `SL: ${stopLoss === null || stopLoss === undefined ? 'None' : `$${formatNumber(Number(stopLoss))}`}`,

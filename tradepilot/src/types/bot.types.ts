@@ -32,7 +32,7 @@ export interface ClosePositionWizardState {
 }
 
 export interface SettingsWizardState {
-  field?: 'leverage' | 'slippage' | 'orderType' | 'language' | 'timezone' | 'maxLeverage' | 'defaultCollateral';
+  field?: 'leverage' | 'slippage' | 'orderType' | 'marginMode' | 'language' | 'timezone' | 'maxLeverage' | 'defaultCollateral';
 }
 
 export interface BroadcastWizardState {

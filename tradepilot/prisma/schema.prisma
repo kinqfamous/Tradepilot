@@ -179,6 +179,11 @@ enum OrderStatus {
   FAILED
 }
 
+enum MarginMode {
+  CROSS
+  ISOLATED
+}
+
 model Order {
   id                Int             @id @default(autoincrement())
   userId            Int
@@ -291,6 +296,7 @@ model UserSettings {
   defaultLeverage   Decimal @default(5) @db.Decimal(6, 2)
   defaultSlippageBps Int    @default(50)
   defaultOrderType  OrderType @default(MARKET)
+  defaultMarginMode MarginMode @default(CROSS)
   language          String  @default("en")
   timezone          String  @default("UTC")
   notificationsOn   Boolean @default(true)

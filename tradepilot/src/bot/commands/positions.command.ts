@@ -23,6 +23,7 @@ export async function positionsCommand(ctx: BotContext): Promise<void> {
         const pnlEmoji = p.unrealizedPnl >= 0 ? '🟢' : '🔴';
         return (
           `${pnlEmoji} *${p.market}* - ${p.side} ${p.leverage}x\n` +
+          `Margin Type: ${p.marginMode === 'ISOLATED' ? 'Isolated' : 'Cross'}\n` +
           `Entry: ${p.entryPrice} | Mark: ${p.markPrice}\n` +
           `Size: ${p.size} | Margin: ${formatUsd(p.margin)}\n` +
           `PnL: ${formatUsd(p.unrealizedPnl)} (${formatPercent(p.roePercent)})\n` +

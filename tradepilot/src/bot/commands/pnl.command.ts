@@ -14,7 +14,7 @@ export async function pnlCommand(ctx: BotContext): Promise<void> {
   try {
     const positions = await marketQueryService.getOpenPositions(ctx.appUserId, config.defaultExchange);
     if (positions.length === 0) {
-      await ctx.reply('📊 You have no open positions to show PnL for.');
+      await ctx.reply('📊 No active trades to show PnL for.');
       return;
     }
 

@@ -27,6 +27,9 @@ import {
   handleSettingsLeverage,
   handleSettingsSlippage,
   handleSettingsOrderType,
+  handleSettingsOrderTypeChoice,
+  handleSettingsMarginMode,
+  handleSettingsMarginModeChoice,
   handleSettingsLanguage,
   handleSettingsTimezone,
   handleSettingsMaxLeverage,
@@ -192,6 +195,9 @@ export function createBot(): Telegraf<BotContext> {
   bot.action('settings_leverage', handleSettingsLeverage);
   bot.action('settings_slippage', handleSettingsSlippage);
   bot.action('settings_order_type', handleSettingsOrderType);
+  bot.action(/^settings_order_type:(MARKET|LIMIT)$/, handleSettingsOrderTypeChoice);
+  bot.action('settings_margin_mode', handleSettingsMarginMode);
+  bot.action(/^settings_margin_mode:(CROSS|ISOLATED)$/, handleSettingsMarginModeChoice);
   bot.action('settings_language', handleSettingsLanguage);
   bot.action('settings_timezone', handleSettingsTimezone);
   bot.action('settings_max_leverage', handleSettingsMaxLeverage);

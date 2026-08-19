@@ -12,6 +12,7 @@ export const settingsScene = new Scenes.WizardScene<BotContext>(
       leverage: 'Enter your new default leverage (e.g. 5):',
       slippage: 'Enter your new default slippage in basis points (e.g. 50 = 0.5%):',
       orderType: 'Enter your new default order type (MARKET or LIMIT):',
+      marginMode: 'Enter your default margin mode (CROSS or ISOLATED):',
       language: 'Enter your language code (e.g. en, es, fr):',
       timezone: 'Enter your timezone (e.g. UTC, America/New_York):',
       maxLeverage: 'Enter your new max leverage cap (e.g. 20):',
@@ -56,6 +57,14 @@ export const settingsScene = new Scenes.WizardScene<BotContext>(
         }
         const updated = await settingsService.setDefaultOrderType(userId, value as any);
         await ctx.reply(`✅ Default order type set to ${updated.defaultOrderType}.`, mainMenuKeyboard);
+      } else if (field === 'marginMode') {
+        const value = raw.toUpperCase();
+        if (value !== 'CROSS' && value !== 'ISOLATED') {
+          await ctx.reply('Please send CROSS or ISOLATED.');
+          return;
+        }
+        await settingsService.setDefaultMarginMode(userId, value);
+        await ctx.reply(`✅ Default margin mode set to ${value}.`, mainMenuKeyboard);
       } else if (field === 'language') {
         const updated = await settingsService.setLanguage(userId, raw);
         await ctx.reply(`✅ Language set to ${updated.language}.`, mainMenuKeyboard);

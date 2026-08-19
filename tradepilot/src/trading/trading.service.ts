@@ -127,6 +127,8 @@ export class TradingService {
         side: request.side === 'LONG' ? 'buy' : 'sell',
         baseUnits: String(baseUnits),
         notionalUsd,
+        collateralUsd: request.collateralUsd,
+        marginMode: (settings as any).defaultMarginMode ?? 'CROSS',
         idempotencyKey,
         type: 'market',
         priceUsd: request.limitPrice ? String(request.limitPrice) : undefined,
@@ -298,6 +300,7 @@ export class TradingService {
         idempotencyKey,
         type: 'market',
         reduceOnly: true,
+        marginMode: exchangePosition.marginMode,
       });
 
       if (!execResult.success) {

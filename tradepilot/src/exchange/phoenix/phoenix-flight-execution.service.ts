@@ -2,6 +2,7 @@ import { Connection, Keypair } from '@solana/web3.js';
 import * as flightClient from './flight.client';
 import { builderFeeService as defaultBuilderFeeService, BuilderFeeService } from '../../fees/builder-fee.service';
 import { log } from '../../logger/logger';
+import { MarginMode } from '../../types/exchange.types';
 
 export interface ExecuteOrderParams {
   connection: Connection;
@@ -12,6 +13,10 @@ export interface ExecuteOrderParams {
   side: 'buy' | 'sell';
   baseUnits: string;
   notionalUsd: number;
+  /** Collateral to fund a new isolated-only market such as WTIOIL. */
+  collateralUsd?: number;
+  /** User-selected mode; Phoenix isolated-only markets override this to ISOLATED. */
+  marginMode?: MarginMode;
   idempotencyKey: string;
   type: 'market' | 'limit';
   priceUsd?: string; // required for type: 'limit'
@@ -33,6 +38,9 @@ export interface ExecuteOrderResult {
 /** The Flight order-building/submission calls this service depends on - injectable so tests never touch Solana or the network. */
 export interface FlightOrderExecutor {
   getFlightRoutedClient: typeof flightClient.getFlightRoutedClient;
+  getPlainClient: typeof flightClient.getPlainClient;
+  isIsolatedOnlyMarket: typeof flightClient.isIsolatedOnlyMarket;
+  buildIsolatedMarketOrderIxs: typeof flightClient.buildIsolatedMarketOrderIxs;
   buildFlightRoutedMarketOrderIx: typeof flightClient.buildFlightRoutedMarketOrderIx;
   buildFlightRoutedMarketOrderWithProtectionsIxs?: typeof flightClient.buildFlightRoutedMarketOrderWithProtectionsIxs;
   buildFlightRoutedLimitOrderIx: typeof flightClient.buildFlightRoutedLimitOrderIx;
@@ -46,6 +54,9 @@ export interface FlightOrderExecutor {
 
 const defaultExecutor: FlightOrderExecutor = {
   getFlightRoutedClient: flightClient.getFlightRoutedClient,
+  getPlainClient: flightClient.getPlainClient,
+  isIsolatedOnlyMarket: flightClient.isIsolatedOnlyMarket,
+  buildIsolatedMarketOrderIxs: flightClient.buildIsolatedMarketOrderIxs,
   buildFlightRoutedMarketOrderIx: flightClient.buildFlightRoutedMarketOrderIx,
   buildFlightRoutedMarketOrderWithProtectionsIxs: flightClient.buildFlightRoutedMarketOrderWithProtectionsIxs,
   buildFlightRoutedLimitOrderIx: flightClient.buildFlightRoutedLimitOrderIx,
@@ -128,14 +139,36 @@ export class PhoenixFlightExecutionService {
         reduceOnly: params.reduceOnly,
       };
 
-      if (routeThroughFlight && feeEvent.builderAuthority) {
-        const client = await this.executor.getFlightRoutedClient({
+      const client = routeThroughFlight && feeEvent.builderAuthority
+        ? await this.executor.getFlightRoutedClient({
           builderAuthority: feeEvent.builderAuthority,
           builderPdaIndex: feeEvent.builderPdaIndex,
           builderSubaccountIndex: feeEvent.builderSubaccountIndex,
           feeBps: feeEvent.feeBps,
-        });
+        })
+        : await this.executor.getPlainClient();
+      const isolatedOnly = this.executor.isIsolatedOnlyMarket(client, params.symbol);
+      const useIsolatedMargin = isolatedOnly || params.marginMode === 'ISOLATED';
 
+      if (useIsolatedMargin) {
+        // Phoenix rejects isolated-only commodities when submitted through
+        // cross subaccount 0. Its isolated API route allocates or finds the
+        // correct child subaccount and includes all setup instructions.
+        if (params.type !== 'market') {
+          throw new Error('Phoenix isolated-margin markets currently support market orders only.');
+        }
+        instructions = await this.executor.buildIsolatedMarketOrderIxs({
+          client,
+          traderAuthority,
+          symbol: params.symbol,
+          side: params.side,
+          baseUnits: params.baseUnits,
+          collateralUsd: params.collateralUsd,
+          stopLossPrice: params.stopLossPrice,
+          takeProfitPrice: params.takeProfitPrice,
+          reduceOnly: params.reduceOnly,
+        });
+      } else if (routeThroughFlight && feeEvent.builderAuthority) {
         instructions = params.type === 'market'
           ? hasProtections
             ? await this.executor.buildFlightRoutedMarketOrderWithProtectionsIxs!({
@@ -249,6 +282,20 @@ function isInvalidInstructionDataError(error: unknown): boolean {
 /** Converts Phoenix's simulation output into an actionable user-facing error. */
 function describeExecutionError(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error);
+  const rentFailure = /Transfer: insufficient lamports (\d+), need (\d+)/i.exec(message);
+  if (rentFailure) {
+    const currentSol = Number(rentFailure[1]) / 1_000_000_000;
+    const requiredSol = Number(rentFailure[2]) / 1_000_000_000;
+    const additionalSol = Math.max(0, requiredSol - currentSol);
+    return `Your trading wallet needs SOL to create Phoenix's isolated account for this market. ` +
+      `It has ${currentSol.toFixed(6)} SOL but needs ${requiredSol.toFixed(6)} SOL before network fees. ` +
+      `Add at least ${additionalSol.toFixed(6)} SOL (fund it to about 0.004 SOL) and try again.`;
+  }
+  if (/failed: insufficient funds for instruction|insufficient funds for instruction/i.test(message)) {
+    return 'Insufficient available Phoenix collateral to open this position. ' +
+      'Make sure your Phoenix account (not only your wallet) holds more than the selected collateral amount plus trading fees, ' +
+      'then try again.';
+  }
   const iocFailure = /IOC order does not meet minimum requirements\. Min base: (\d+), Min quote: \d+, Filled base: (\d+)/i.exec(message);
   if (!iocFailure) return message;
 

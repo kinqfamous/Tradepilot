@@ -70,6 +70,7 @@ export const settingsMenuKeyboard = Markup.inlineKeyboard([
   [Markup.button.callback('⚖️ Default Leverage', 'settings_leverage')],
   [Markup.button.callback('📉 Default Slippage', 'settings_slippage')],
   [Markup.button.callback('📋 Default Order Type', 'settings_order_type')],
+  [Markup.button.callback('🧮 Margin Mode', 'settings_margin_mode')],
   [Markup.button.callback('🌍 Language', 'settings_language')],
   [Markup.button.callback('🕒 Timezone', 'settings_timezone')],
   [Markup.button.callback('🔔 Toggle Notifications', 'settings_notifications')],

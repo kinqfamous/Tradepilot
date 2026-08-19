@@ -1,5 +1,5 @@
 import { PositionAdapter } from '../interfaces/position-adapter.interface';
-import { ExchangeCredential, ExchangePosition, PositionSide } from '../../types/exchange.types';
+import { ExchangeCredential, ExchangePosition, MarginMode, PositionSide } from '../../types/exchange.types';
 import { PhoenixRestClient, PHOENIX_ENDPOINTS } from './phoenix.rest-client';
 import { getPlainClient } from './flight.client';
 import { ticksToUsdWithMarketParams } from '@ellipsis-labs/rise';
@@ -8,7 +8,9 @@ interface PhoenixTraderStateResponse {
   snapshot: {
     subaccounts: Array<{
       collateral: string;
-      positions: Array<{
+      // Phoenix omits `positions` entirely for empty child/isolated
+      // subaccounts instead of returning an empty array.
+      positions?: Array<{
         positionSequenceNumber: string;
         symbol: string;
         basePositionUnits?: string;
@@ -32,7 +34,7 @@ interface PhoenixMarketsStatsResponse {
   }>;
 }
 
-type PhoenixRawPosition = PhoenixTraderStateResponse['snapshot']['subaccounts'][number]['positions'][number];
+type PhoenixRawPosition = NonNullable<PhoenixTraderStateResponse['snapshot']['subaccounts'][number]['positions']>[number];
 const QUOTE_LOTS_PER_USD = 1_000_000;
 const LIQUIDATION_LOOKUP_TIMEOUT_MS = 2_500;
 
@@ -100,6 +102,7 @@ function toExchangePosition(
   baseLotsDecimals: number,
   markPrice: number,
   liquidationPrice: number | null,
+  marginMode: MarginMode,
 ): ExchangePosition {
   const size = basePositionSize(p, baseLotsDecimals);
   const entryPrice = Number(p.entryPriceUsd ?? 0);
@@ -122,6 +125,7 @@ function toExchangePosition(
     unrealizedPnl,
     roePercent: margin > 0 ? (unrealizedPnl / margin) * 100 : 0,
     fundingPaid: Number(p.accumulatedFundingQuoteLots) / QUOTE_LOTS_PER_USD,
+    marginMode,
   };
 }
 
@@ -141,7 +145,7 @@ export class PhoenixPositionAdapter implements PositionAdapter {
     const marksBySymbol = new Map(marketStats.markets.map((market) => [market.symbol, Number(market.mark_price)]));
 
     const positionsBySubaccount = response.snapshot.subaccounts.map((account, subaccountIndex) => {
-      const activePositions = account.positions.flatMap((position) => {
+      const activePositions = (account.positions ?? []).flatMap((position) => {
         const baseLotsDecimals = decimalsBySymbol.get(position.symbol);
         if (baseLotsDecimals === undefined) {
           throw new Error(`Phoenix market metadata is unavailable for ${position.symbol}.`);
@@ -167,7 +171,14 @@ export class PhoenixPositionAdapter implements PositionAdapter {
         subaccountIndex,
         position.symbol,
       );
-      return toExchangePosition(position, margin, baseLotsDecimals, markPrice, liquidationPrice);
+      return toExchangePosition(
+        position,
+        margin,
+        baseLotsDecimals,
+        markPrice,
+        liquidationPrice,
+        subaccountIndex === 0 ? 'CROSS' : 'ISOLATED',
+      );
     }));
   }
 

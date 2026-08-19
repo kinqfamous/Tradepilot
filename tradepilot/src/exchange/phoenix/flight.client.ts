@@ -114,7 +114,12 @@ export async function getFlightRoutedClient(params: {
       builderAuthority: params.builderAuthority as never,
       builderPdaIndex: params.builderPdaIndex,
       builderSubaccountIndex: params.builderSubaccountIndex,
-      feeBpsOverride: BigInt(params.feeBps),
+      // Use Flight's standard proxy instruction and the builder fee that is
+      // registered on-chain. The optional feeBpsOverride selects a different
+      // proxy instruction intended only for exceptional per-route pricing;
+      // it fails for WTIOIL on the current Phoenix program account layout.
+      // The active builder is registered at the same 8 bps rate stored by
+      // TradePilot, so no fee behavior changes here.
     },
   });
 
@@ -156,6 +161,72 @@ export interface BuildRoutedOrderParams {
   slippageBps?: number;
   /** Closing orders must never open a position in the opposite direction. */
   reduceOnly?: boolean;
+}
+
+/** Parameters for Phoenix's server-built isolated-market-order route. */
+export interface BuildIsolatedMarketOrderParams {
+  client: PhoenixRiseClient;
+  traderAuthority: string;
+  symbol: string;
+  side: 'buy' | 'sell';
+  baseUnits: string;
+  /** New isolated positions must be funded from the user's cross account. */
+  collateralUsd?: number;
+  stopLossPrice?: string;
+  takeProfitPrice?: string;
+  reduceOnly?: boolean;
+}
+
+/**
+ * Phoenix commodities such as WTIOIL are isolated-only. They cannot be sent
+ * to cross subaccount 0, even if that is the user's normal trading account.
+ */
+export function isIsolatedOnlyMarket(client: PhoenixRiseClient, symbol: string): boolean {
+  const market = client.exchange.market(symbol);
+  if (!market) throw new Error(`Phoenix market metadata is unavailable for ${symbol}.`);
+  return market.isolatedOnly === true;
+}
+
+/**
+ * Builds the complete isolated-order setup supplied by Phoenix: allocation
+ * (and registration when necessary), parent/child synchronisation, collateral
+ * transfer, the order itself, and the post-order collateral sweep.  The API
+ * route also inherits the Flight configuration from the supplied client.
+ */
+export async function buildIsolatedMarketOrderIxs(params: BuildIsolatedMarketOrderParams): Promise<unknown[]> {
+  const quantity = Number(params.baseUnits);
+  if (!Number.isFinite(quantity) || quantity <= 0) {
+    throw new Error('Isolated market order quantity must be a positive number.');
+  }
+
+  let transferAmount: number | undefined;
+  if (!params.reduceOnly) {
+    if (!Number.isFinite(params.collateralUsd) || (params.collateralUsd ?? 0) <= 0) {
+      throw new Error('Collateral is required to open an isolated Phoenix position.');
+    }
+    // Phoenix collateral is denominated in USDC quote lots (six decimals).
+    transferAmount = Math.round((params.collateralUsd ?? 0) * 1_000_000);
+    if (!Number.isSafeInteger(transferAmount) || transferAmount <= 0) {
+      throw new Error('Isolated position collateral is outside Phoenix\'s supported range.');
+    }
+  }
+
+  return params.client.api.orders().placeIsolatedMarketOrder({
+    authority: params.traderAuthority,
+    symbol: params.symbol,
+    side: params.side,
+    quantity,
+    transferAmount,
+    pdaIndex: DEFAULT_TRADER_PDA_INDEX,
+    isReduceOnly: params.reduceOnly,
+    tpSl: params.stopLossPrice || params.takeProfitPrice
+      ? {
+          stopLossTriggerPrice: params.stopLossPrice ? Number(params.stopLossPrice) : undefined,
+          takeProfitTriggerPrice: params.takeProfitPrice ? Number(params.takeProfitPrice) : undefined,
+          quantity,
+        }
+      : undefined,
+  });
 }
 
 function hasProtectionOrders(params: BuildRoutedOrderParams): boolean {

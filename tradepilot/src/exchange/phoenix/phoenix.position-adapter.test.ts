@@ -35,6 +35,7 @@ describe('PhoenixPositionAdapter', () => {
       side: 'LONG',
       margin: 3.952819,
       markPrice: 150,
+      marginMode: 'CROSS',
     });
     expect(positions[0].unrealizedPnl).toBeCloseTo(5.278, 6);
     expect(positions[0].liquidationPrice).toBe(146.12);
@@ -83,6 +84,39 @@ describe('PhoenixPositionAdapter', () => {
 
     await expect(adapter.getOpenPositions({ walletAddress: 'wallet' })).resolves.toMatchObject([
       { liquidationPrice: null },
+    ]);
+  });
+
+  it('ignores an empty isolated subaccount when Phoenix omits its positions field', async () => {
+    const client = {
+      get: vi
+        .fn()
+        .mockResolvedValueOnce({
+          snapshot: {
+            subaccounts: [
+              { collateral: '1000000', positions: [] },
+              {
+                collateral: '5000000',
+                positions: [{
+                  positionSequenceNumber: '2',
+                  symbol: 'WTIOIL',
+                  basePositionUnits: '1',
+                  basePositionLots: '1',
+                  entryPriceUsd: '70',
+                  accumulatedFundingQuoteLots: '0',
+                }],
+              },
+              { collateral: '0' },
+            ],
+          },
+        })
+        .mockResolvedValueOnce([{ symbol: 'WTIOIL', baseLotsDecimals: 0 }])
+        .mockResolvedValueOnce({ markets: [{ symbol: 'WTIOIL', mark_price: 71 }] }),
+    };
+    const adapter = new PhoenixPositionAdapter(client as any, { getLiquidationPrice: vi.fn().mockResolvedValue(null) });
+
+    await expect(adapter.getOpenPositions({ walletAddress: 'wallet' })).resolves.toMatchObject([
+      { market: 'WTIOIL', size: 1, margin: 5, marginMode: 'ISOLATED' },
     ]);
   });
 });

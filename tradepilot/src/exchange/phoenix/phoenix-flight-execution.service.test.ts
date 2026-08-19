@@ -28,6 +28,9 @@ function defaultFeeServiceFakes() {
 function makeFakeExecutor(overrides: Partial<FlightOrderExecutor> = {}): FlightOrderExecutor {
   return {
     getFlightRoutedClient: vi.fn(async () => 'flight-client' as any),
+    getPlainClient: vi.fn(async () => 'plain-client' as any),
+    isIsolatedOnlyMarket: vi.fn(() => false),
+    buildIsolatedMarketOrderIxs: vi.fn(async () => ['isolated-market-ix'] as any),
     buildFlightRoutedMarketOrderIx: vi.fn(async () => 'flight-market-ix' as any),
     buildFlightRoutedLimitOrderIx: vi.fn(async () => 'flight-limit-ix' as any),
     buildPlainMarketOrderIx: vi.fn(async () => 'plain-market-ix' as any),
@@ -53,6 +56,32 @@ function baseParams(overrides: Record<string, unknown> = {}) {
 }
 
 describe('PhoenixFlightExecutionService - Flight routing', () => {
+  it('uses Phoenix\'s isolated-order route for isolated-only markets such as WTIOIL', async () => {
+    const executor = makeFakeExecutor({
+      isIsolatedOnlyMarket: vi.fn(() => true),
+    });
+    const service = new PhoenixFlightExecutionService(makeFakeFeeService() as any, executor);
+
+    await service.executeOrder(baseParams({ symbol: 'WTIOIL', collateralUsd: 50 }));
+
+    expect(executor.buildIsolatedMarketOrderIxs).toHaveBeenCalledWith(
+      expect.objectContaining({ symbol: 'WTIOIL', collateralUsd: 50, reduceOnly: undefined }),
+    );
+    expect(executor.buildFlightRoutedMarketOrderIx).not.toHaveBeenCalled();
+  });
+
+  it('honours a user\'s isolated-margin setting for markets that also allow cross margin', async () => {
+    const executor = makeFakeExecutor();
+    const service = new PhoenixFlightExecutionService(makeFakeFeeService() as any, executor);
+
+    await service.executeOrder(baseParams({ marginMode: 'ISOLATED', collateralUsd: 50 }));
+
+    expect(executor.buildIsolatedMarketOrderIxs).toHaveBeenCalledWith(
+      expect.objectContaining({ symbol: 'SOL-PERP', collateralUsd: 50 }),
+    );
+    expect(executor.buildFlightRoutedMarketOrderIx).not.toHaveBeenCalled();
+  });
+
   it('routes market orders through Flight when fees are enabled and a builder is configured', async () => {
     const feeService = makeFakeFeeService({
       getConfig: vi.fn(async () => makeBuilderConfig({ builderFeeEnabled: true, builderAuthority: 'ABC' })),
@@ -234,5 +263,35 @@ describe('PhoenixFlightExecutionService - failed trade / failed fee', () => {
 
     expect(result).toMatchObject({ success: false, errorMessage: expect.stringMatching(/Insufficient market liquidity.*1\.0%/i) });
     expect(feeService.failFee).toHaveBeenCalledWith(79, expect.stringMatching(/Insufficient market liquidity/i));
+  });
+
+  it('explains when Phoenix needs SOL rent for a new isolated subaccount', async () => {
+    const feeEvent = makeFeeEvent({ id: 80 });
+    const feeService = makeFakeFeeService({ recordExpectedFee: vi.fn(async () => feeEvent) });
+    const executor = makeFakeExecutor({
+      assembleAndSubmit: vi.fn(async () => {
+        throw new Error('Transfer: insufficient lamports 1669240, need 2839680');
+      }),
+    });
+    const service = new PhoenixFlightExecutionService(feeService as any, executor);
+
+    const result = await service.executeOrder(baseParams());
+
+    expect(result.errorMessage).toMatch(/has 0\.001669 SOL but needs 0\.002840 SOL.*fund it to about 0\.004 SOL/i);
+  });
+
+  it('explains when Phoenix reports insufficient available collateral', async () => {
+    const feeEvent = makeFeeEvent({ id: 81 });
+    const feeService = makeFakeFeeService({ recordExpectedFee: vi.fn(async () => feeEvent) });
+    const executor = makeFakeExecutor({
+      assembleAndSubmit: vi.fn(async () => {
+        throw new Error('Program Etrn failed: insufficient funds for instruction');
+      }),
+    });
+    const service = new PhoenixFlightExecutionService(feeService as any, executor);
+
+    const result = await service.executeOrder(baseParams());
+
+    expect(result.errorMessage).toMatch(/Insufficient available Phoenix collateral.*selected collateral amount plus trading fees/i);
   });
 });
