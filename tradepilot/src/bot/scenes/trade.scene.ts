@@ -181,11 +181,12 @@ export const tradeScene = new Scenes.WizardScene<BotContext>(
       return ctx.scene.leave();
     }
     const price = Number(raw);
-    if (!Number.isFinite(price) || price <= 0) {
-      await ctx.reply('Please enter a valid positive price, or /cancel.');
+    const parsed = parseOrError(priceSchema, price);
+    if ('error' in parsed) {
+      await ctx.reply(`${parsed.error} Or /cancel.`);
       return;
     }
-    state(ctx).limitPrice = price;
+    state(ctx).limitPrice = parsed.value;
     await ctx.reply('Optional stop loss price? Send a price, or Skip.', skipKeyboard);
     return ctx.wizard.next(); // -> step 7
   },
@@ -287,6 +288,12 @@ export const tradeScene = new Scenes.WizardScene<BotContext>(
 
       if (result.status === 'REJECTED') {
         await ctx.reply(`❌ Trade failed: ${result.errorMessage}`, mainMenuKeyboard);
+      } else if (s.orderType === 'LIMIT' && result.status === 'SUBMITTED') {
+        await ctx.reply(
+          `✅ *${s.side} ${s.market}* limit order placed at $${s.limitPrice}.\n\n` +
+            (result.txSignature ? `Tx: \`${result.txSignature}\`` : ''),
+          { parse_mode: 'Markdown', ...mainMenuKeyboard },
+        );
       } else {
         await ctx.reply(
           `✅ *${s.side} ${s.market}* submitted at ${s.leverage}x.\n\n` +

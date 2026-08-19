@@ -1,274 +1,257 @@
 # TradePilot
 
-A Telegram-native perpetual trading platform. Phoenix Perps (Solana) is the first exchange
-integration; the exchange layer is built so Hyperliquid, Drift, or Jupiter Perps can be added
-without touching anything outside `src/exchange/`.
+TradePilot is a Telegram-native perpetual futures trading platform. Phoenix Perps on Solana
+is the first supported exchange. The exchange layer is adapter-based so additional venues can
+be integrated without changing the bot or core trading workflows.
 
----
+## Features
 
-## Read this first: scope and honesty notes
-
-This is a large platform. Everything listed below is **fully implemented, real, runnable code**
-— but a few things are worth knowing before you point it at real funds:
-
-1. **Phoenix endpoint paths are best-effort, not verified against a private route table.**
-   Phoenix's public docs (`docs.phoenix.trade/api`) describe endpoint *categories* (Auth,
-   Exchange, Invite, Trader) under the verified base URL `https://perp-api.phoenix.trade`, but
-   I could not pull their exact per-route paths and payload shapes. Every path lives in one
-   place — `src/exchange/phoenix/phoenix.rest-client.ts` (`PHOENIX_ENDPOINTS`) — confirm each
-   one against Phoenix's live reference before routing real funds through this adapter.
-2. **Self-custodial, bot-signed trading.** Like most instant-execution Telegram trading bots,
-   TradePilot holds an encrypted copy of each user's Solana signing key (AES-256-GCM, same
-   pattern used for the standalone pump.fun bot) so it can sign and submit transactions the
-   instant someone taps "Confirm" — no external wallet app round-trip. Users can generate a
-   fresh bot-managed wallet or import one they already control.
-3. **Not a custodial brokerage.** Phoenix Perps settles on-chain; positions live in the user's
-   own wallet, not in a TradePilot-controlled pool. That said, running this for other people —
-   especially with the referral/rewards program switched on — carries real compliance
-   obligations (geographic restrictions, KYC decisions, referral-fee handling) that are on you
-   to work out before going live. This isn't legal advice, just a flag.
-4. **Scope cuts, clearly labeled:**
-   - i18n: `language`/`timezone` are stored per-user but no translation layer exists yet —
-     all bot copy is English.
-   - The admin panel covers stats, revenue (7-day volume), broadcast, and the four trading
-     modes — it does not include a full audit-log viewer UI (the data is all in
-     `AdminAuditLog`/`LogEntry`, queryable directly or easy to add a `/logs` command for).
-   - WebSocket streaming (`PhoenixWebSocketAdapter`) has real reconnect/backoff/heartbeat
-     logic and is ready to wire into live position/PnL push updates in Telegram, but the bot
-     layer currently polls REST on-demand (`/positions`, `/balance`) rather than pushing
-     unsolicited updates — wiring `realtime.subscribeAccount` to a notification is a
-     small, contained addition on top of what's here.
-   - **Limit-order cancellation is not implemented.** `/trade` supports placing limit orders,
-     but there's currently no way to cancel a resting one. I could not find a confirmed
-     `@ellipsis-labs/rise` cancel-order method in what I verified from Phoenix's docs (only
-     `placeLimitOrder`/`placeMarketOrder`/registration calls) - rather than invent one, this is
-     left as a known gap. Add it to `flight.client.ts` once you've confirmed the real method
-     name against the SDK's actual TypeScript types.
-
-Nothing here is a stub pretending to be finished — these are genuine, deliberate scope
-boundaries on a platform this size, called out explicitly instead of silently glossed over.
-
----
+- Telegram onboarding, account linking, funding, withdrawal, and trading workflows
+- Market and limit orders with optional stop-loss and take-profit protection
+- Cross and isolated margin support, subject to Phoenix market capabilities
+- Position management, partial closes, close-all, trade history, and PnL cards
+- User-configurable leverage, slippage, order type, margin mode, and collateral defaults
+- Phoenix Flight builder-fee routing and fee-event reconciliation
+- Referral attribution and reward accounting
+- Redis-backed rate limiting and BullMQ notification delivery
+- Administrative trading modes, broadcasts, statistics, and audit logging
 
 ## Architecture
 
-
+```text
 src/
-├── config/env.ts              # Environment loading & validation
-├── constants/                 # Shared constants
-├── types/                     # Domain + bot types
-├── database/                  # Prisma + Redis clients
-├── logger/                    # Pino file logger + DB-backed structured logs
-├── utils/                     # Retry, encryption, formatting
-├── middlewares/                # Error boundary, identity, rate limit, maintenance gate, admin guard
-├── exchange/
-│   ├── interfaces/            # ExchangeAdapter + Wallet/Market/Position/Order/Trading/Realtime adapters
-│   ├── phoenix/                # Phoenix implementation of every interface above
-│   ├── exchange.registry.ts   # The ONLY place a concrete exchange is instantiated
-│   └── wallet-key.service.ts  # Encrypted bot-signing key management (exchange-agnostic)
-├── users/                     # Registration, onboarding, exchange-account linking
-├── settings/                  # Per-user trading defaults
-├── referrals/                 # Referral codes, reward crediting, leaderboard
-├── trading/                   # TradingService (open/close/closeAll), market/balance queries
-├── notifications/             # Notification persistence + BullMQ enqueue
-├── queues/                    # BullMQ queue definition + delivery worker (run separately)
-├── admin/                     # Platform stats, trading-mode control, audit log
-└── bot/
-    ├── bot.ts                  # Telegraf wiring: middleware order, commands, actions
-    ├── session.ts, keyboards.ts
-    ├── scenes/                 # Onboarding, link-account, trade, close-position, settings, broadcast
-    └── commands/                # start, positions, balance, markets, referral, settings, history, admin
+|-- admin/                     Platform controls, statistics, and audit logging
+|-- bot/                       Telegraf commands, scenes, keyboards, and sessions
+|-- config/                    Environment configuration
+|-- constants/                 Shared constants
+|-- database/                  Prisma and Redis clients
+|-- exchange/
+|   |-- interfaces/            Exchange capability contracts
+|   |-- phoenix/               Phoenix REST, WebSocket, wallet, and execution adapters
+|   |-- exchange.registry.ts   Exchange factory registry
+|   `-- wallet-key.service.ts  Encrypted signing-key access
+|-- fees/                      Builder-fee configuration and event tracking
+|-- logger/                    Structured application logging
+|-- middlewares/               Identity, rate limit, maintenance, admin, and error handling
+|-- notifications/             Notification persistence
+|-- pnl/                       PnL card generation
+|-- queues/                    Background notification processing
+|-- referrals/                 Referral codes and rewards
+|-- settings/                  User trading preferences
+|-- trading/                   Order orchestration and market queries
+|-- types/                     Shared domain types
+|-- users/                     User and exchange-account management
+`-- validators/                Input validation
+```
 
+### Exchange adapters
 
-### Exchange adapter pattern
+Exchange integrations implement the contracts in `src/exchange/interfaces/` and are composed
+into an `ExchangeAdapter`. Concrete adapters are created only by `exchange.registry.ts`.
+Trading and bot services resolve exchanges through the registry and do not depend directly on
+a venue-specific implementation.
 
-Nothing outside `exchange/interfaces/` and `exchange/phoenix/` imports a concrete exchange
-module. Every call site (bot commands, `TradingService`, `MarketQueryService`) goes through
-`exchangeRegistry.get(exchangeKey)` and only ever touches the `ExchangeAdapter` interface.
+A new exchange integration requires:
 
-To add a new exchange (Hyperliquid, Drift, Jupiter Perps):
-1. Create `src/exchange/<name>/` implementing `WalletAdapter`, `MarketAdapter`,
-   `PositionAdapter`, `OrderAdapter`, `TradingAdapter`, and optionally `RealtimeAdapter`.
-2. Compose them into one object satisfying `ExchangeAdapter` (see `phoenix.adapter.ts`).
-3. Register it: one line in `exchange.registry.ts`'s `factories` map.
+1. Implementing the wallet, market, position, order, and trading adapter contracts.
+2. Composing the implementations into an `ExchangeAdapter`.
+3. Registering the adapter factory in `exchange.registry.ts`.
 
-No other file changes.
+## Trading workflow
 
-### Telegram flow
+The `/trade` wizard collects the market, side, collateral, leverage, order type, limit price
+when applicable, and optional stop-loss and take-profit prices before displaying a final
+confirmation.
 
-**Onboarding:** `/start` → register (referral code captured from deep-link payload) → accept
-terms → link Phoenix account (generate or import wallet) → active.
+Market orders are submitted as full-fill IOC orders. A confirmed market entry is persisted as
+a filled order, position, and trade. Stop-loss and take-profit protection is submitted in the
+same transaction and stored against the local position.
 
-**Trade:** market → long/short → collateral (USD) → leverage → order type → optional
-limit price → optional SL → optional TP → confirm → execute.
+Limit orders are submitted as resting Phoenix orders and remain `SUBMITTED` locally until an
+exchange fill is observed. When protection prices are supplied, Phoenix conditionals are
+attached atomically to the limit order. A confirmed placement does not create a local position
+or trade because it does not prove that the entry has filled.
 
-**Close:** shows open positions → pick market → 25/50/75/100%/custom → confirm → execute.
+Protection rules are validated against the expected entry price:
 
-**Admin** (`/admin`, restricted to `TELEGRAM_ADMIN_IDS`): stats, broadcast, and the four
-trading modes (Normal / Read-Only / Maintenance / Emergency Stop). Emergency Stop and
-Read-Only block **new** trades (enforced in `TradingService.open`, not just at the bot layer,
-so it can't be bypassed) while still allowing users to close existing positions to manage risk.
-Maintenance mode blocks everything, including reads.
+- Long positions require stop loss below entry and take profit above entry.
+- Short positions require stop loss above entry and take profit below entry.
 
-### Security
+## Requirements
 
-- Bot-signing keys: AES-256-GCM at rest, decrypted only in-memory to sign a specific
-  transaction (`WalletKeyService`).
-- Rate limiting: Redis-backed fixed-window limiter, per Telegram user ID.
-- Idempotency: every order carries a unique `idempotencyKey`; `TradingService.open` checks
-  for an existing order with that key before submitting, so retries/duplicate taps can't
-  double-execute a trade.
-- Admin commands: gated by `TELEGRAM_ADMIN_IDS`, every admin action recorded to
-  `AdminAuditLog`.
+- Node.js 18 or later
+- PostgreSQL
+- Redis
+- A Telegram bot token
+- A Solana RPC endpoint
+- Phoenix credentials and a funded wallet for live trading
 
----
-
-## Environment variables
-
-See `.env.example` for the full list with descriptions. The two you must generate yourself:
+## Installation
 
 ```bash
+npm install
+cp .env.example .env
+npm run prisma:generate
+npm run prisma:deploy
+```
 
+Generate independent secrets for `CREDENTIALS_ENCRYPTION_KEY` and `JWT_SECRET`:
 
-
-CREDENTIALS_ENCRYPTION_KEY and JWT_SECRET
-
+```bash
 node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+```
 
+`CREDENTIALS_ENCRYPTION_KEY` must be exactly 32 bytes represented as 64 hexadecimal
+characters. Secrets and wallet keypair files must not be committed to source control.
 
-## Database
+## Configuration
+
+The base environment template is available in `.env.example`. The primary settings are:
+
+| Variable | Purpose |
+| --- | --- |
+| `TELEGRAM_BOT_TOKEN` | Telegram bot authentication token |
+| `TELEGRAM_ADMIN_IDS` | Comma-separated Telegram user IDs with admin access |
+| `TELEGRAM_BOT_USERNAME` | Bot username used in referral links |
+| `DATABASE_URL` | PostgreSQL connection string |
+| `REDIS_URL` | Redis connection string |
+| `CREDENTIALS_ENCRYPTION_KEY` | AES-256-GCM key for stored wallet credentials |
+| `JWT_SECRET` | Internal session-token signing secret |
+| `PHOENIX_REST_URL` | Phoenix REST API base URL |
+| `PHOENIX_WS_URL` | Phoenix WebSocket endpoint |
+| `PHOENIX_SOLANA_RPC_URL` | Solana RPC endpoint used for Phoenix transactions |
+| `DEFAULT_EXCHANGE` | Default exchange adapter key |
+| `DEFAULT_LEVERAGE` | Initial leverage preference |
+| `DEFAULT_SLIPPAGE_BPS` | Initial slippage tolerance in basis points |
+| `DEFAULT_ORDER_TYPE` | Initial order type preference |
+| `LOG_LEVEL` | Application log level |
+| `LOG_DIR` | Log output directory |
+
+Phoenix Flight configuration is read from `TRADEPILOT_BUILDER_AUTHORITY`,
+`TRADEPILOT_BUILDER_TRADER_ACCOUNT`, `TRADEPILOT_BUILDER_PDA_INDEX`,
+`TRADEPILOT_BUILDER_SUBACCOUNT_INDEX`, and `TRADEPILOT_BUILDER_FEE_BPS`. Environment values
+seed the database on first boot; `BuilderConfig` is the runtime source of truth afterward.
+
+## Running the application
+
+Start the bot in development mode:
 
 ```bash
-npm run prisma:migrate   # creates the schema in your Postgres instance
+npm run dev
+```
 
-Running
+Run the notification worker in a separate process:
 
-npm run dev       # the bot itself
-npm run worker     # separately: the notification-delivery worker (requires Redis)
+```bash
+npm run worker
+```
 
-Phoenix Flight builder fees
-
-TradePilot charges its own platform fee (default 8 bps / 0.08%) on trades, additive on top
-of Phoenix's own trading fee, using Phoenix's official Flight/Rise builder-fee mechanism
-(@ellipsis-labs/rise). See src/exchange/phoenix/flight.client.ts for the full technical
-notes on what's independently verified vs. best-effort.
-
-Setup:
-
-
-
-
-
-Register a builder authority - either through
-
-flight.phoenix.trade directly with your own wallet, or via
- npm run register-builder -- --keypair ./builder-keypair.json --fee-bps 8 (see the script's
- header comment for full usage; the signer file must never be committed or placed in .env).
-
-
-
-Set TRADEPILOT_BUILDER_AUTHORITY in .env to that account's public key.
-
-
-
-Restart the bot. /admin builder confirms registration status.
-
-Admin commands: /admin fees, /admin fees on, /admin fees off, /admin builder,
-/admin revenue, /admin setbuilderfee <bps>.
-
-Design notes worth knowing:
-
-
-
-
-
-The database (BuilderConfig) is the runtime source of truth for the fee rate after first
-boot - .env only seeds the initial value. Changing the fee via /admin setbuilderfee does
-not touch anything on-chain; it only changes what TradePilot calculates and displays as
-"expected." Whether Phoenix's Flight program itself supports updating a fee on an
-already-registered builder (vs. requiring re-registration) is not something I could
-independently confirm - verify this before assuming a DB-level change alone changes what's
-actually charged on-chain.
-
-
-
-Every FeeEvent snapshots the builder authority/PDA/subaccount/fee-bps at the moment of the
-trade, so a later admin change never rewrites fee history.
-
-
-
-confirmedFeeUsd is recorded as equal to the expected amount once the routed transaction
-confirms on-chain - there's no independently verified way to read back the exact amount
-Phoenix's program actually deducted. If you find that API, wire the comparison into
-reconcile() and flag mismatches rather than trusting either number blindly.
-
-
-
-Withdrawal is entirely Phoenix's mechanism, not TradePilot's - /admin builder links to
-flight.phoenix.trade rather than fabricating a withdrawal endpoint.
-
-Production validation checklist
-
-Run through this in order before enabling public trading with real funds. None of this is
-automated - each step requires a live action and a human looking at the result.
-
-
-
-
-
-npm test - all automated tests pass (uses mocks only, never real funds).
-
-
-
-Register the Flight builder (see Setup above) and confirm /admin builder shows
-
-REGISTERED.
-
-
-
-Confirm the fee is set to 8 bps: /admin fees.
-
-
-
-Execute one very small real test trade (smallest size Phoenix allows).
-
-
-
-Confirm the trade transaction on-chain via a Solana explorer.
-
-
-
-Confirm Phoenix's own trading fee was charged as expected (check the transaction's parsed
-
-instructions/balance changes).
-
-
-
-Confirm TradePilot's builder fee was charged as part of the same transaction - it should
-
-not be a second, separate transaction.
-
-
-
-Check /admin builder - the builder account's balance should reflect the new fee.
-
-
-
-Confirm that fee shows up in Phoenix's own Flight interface
-
-(flight.phoenix.trade) under your builder account, not just in TradePilot's database.
-
-
-
-Do a real (small) withdrawal through Phoenix's official Flight withdrawal flow - confirm the
-
-funds actually arrive in your wallet.
-
-
-
-Only after all ten steps check out, flip real users on.
-
-Tech stack
-
-TypeScript, Node.js, Telegraf, PostgreSQL, Prisma ORM, Redis, BullMQ, Axios, ws, Pino, Zod,
-@solana/web3.js, @ellipsis-labs/rise, Vitest.
+Production builds use:
+
+```bash
+npm run build
+npm start
+```
+
+## Bot commands
+
+| Command | Description |
+| --- | --- |
+| `/trade` | Open the trade wizard |
+| `/positions` | Display open positions |
+| `/close` | Close part or all of a position |
+| `/closeall` | Close every open position |
+| `/balance` | Display Phoenix balances |
+| `/fund` | Fund the linked Phoenix account |
+| `/withdraw` | Withdraw through Phoenix |
+| `/markets` | Browse supported markets |
+| `/history` | Display recent trade history |
+| `/pnl` | Generate a PnL summary card |
+| `/settings` | Manage trading preferences and wallet options |
+| `/link` | Link or create a Phoenix wallet |
+| `/cancel` | Exit the active Telegram wizard |
+| `/admin` | Open the administrator panel |
+
+The `/cancel` command exits a bot conversation. It does not cancel a resting exchange order.
+
+## Trading modes
+
+Administrators can set one of four platform modes:
+
+- `NORMAL`: all supported operations are available.
+- `READ_ONLY`: new entries are blocked; risk-reducing closes remain available.
+- `MAINTENANCE`: trading and user-facing reads are blocked.
+- `EMERGENCY_STOP`: new entries are blocked; position closes remain available.
+
+Entry restrictions are enforced by `TradingService`, not only by the Telegram interface.
+
+## Phoenix Flight builder fees
+
+TradePilot supports Phoenix Flight builder-fee routing through `@ellipsis-labs/rise`. The
+configured builder fee is additive to Phoenix trading fees. Each `FeeEvent` stores an immutable
+snapshot of the builder authority, PDA indices, fee rate, expected amount, and associated order.
+
+A builder can be registered through the Phoenix Flight interface or with the bundled script:
+
+```bash
+npm run register-builder -- --keypair ./builder-keypair.json --fee-bps 8
+```
+
+The registration keypair is an administrative signer and must be stored outside the repository.
+The application requires only the builder public configuration during normal operation.
+
+Available administrative fee commands include `/fees`, `/builder`, `/revenue`, and
+`/setbuilderfee <bps>`.
+
+`confirmedFeeUsd` currently records the expected fee after the routed market transaction is
+confirmed. Exact builder-fee reconciliation from transaction account deltas is not implemented.
+Limit-order fee events remain pending until the corresponding fill can be synchronized.
+
+## Security
+
+- Wallet signing keys are encrypted at rest with AES-256-GCM.
+- Decrypted keys are held in memory only while signing a transaction.
+- Idempotency keys prevent duplicate order submission during retries.
+- Telegram admin commands are restricted by numeric user ID.
+- Administrative changes are written to the audit log.
+- User-level rate limiting is enforced through Redis.
+- Trading-mode and builder-fee consistency gates are enforced in the service layer.
+
+TradePilot signs transactions on behalf of users from bot-managed or imported wallets. This
+deployment model requires production-grade secret management, restricted database access,
+encrypted backups, and a documented key-rotation process.
+
+## Current limitations
+
+- Resting limit orders cannot currently be cancelled through the bot.
+- Limit-order fills are not synchronized into local positions, trades, protection records, or
+  fee confirmations.
+- SL/TP conditionals attached to resting limit orders are active on Phoenix but are not displayed
+  locally before fill synchronization.
+- WebSocket account subscriptions are implemented at the adapter layer but are not connected to
+  proactive Telegram position and PnL notifications.
+- Language and timezone preferences are stored, but bot messages are currently English only.
+- The administrator interface does not include an audit-log browser.
+- Phoenix endpoint compatibility and real-fund flows must be validated against the target Phoenix
+  environment before production deployment.
+
+## Verification
+
+Run the automated checks with:
+
+```bash
+npm test
+npm run build
+npm run lint
+```
+
+Automated tests use mocks and do not submit real transactions. Production readiness additionally
+requires controlled live validation with the minimum supported order size. Validation should
+cover market entry, resting limit placement, long and short SL/TP triggers, partial close,
+close-all, Flight fee attribution, balance reconciliation, funding, withdrawal, and recovery
+from rejected or expired transactions.
+
+## Technology
+
+TypeScript, Node.js, Telegraf, PostgreSQL, Prisma, Redis, BullMQ, Axios, WebSocket, Pino, Zod,
+Solana Web3.js, Phoenix Rise SDK, and Vitest.

@@ -45,19 +45,6 @@ export class TradingService {
     if (!allowed) {
       return { externalOrderId: '', status: 'REJECTED', errorMessage: reason };
     }
-    // A Flight-routed limit transaction confirms placement, not execution.
-    // Until an exchange fill synchronizer can authoritatively observe fills
-    // and attached conditionals, accepting a real limit order would leave
-    // local positions and fees unsafe to manage. Fail closed rather than
-    // presenting a partially implemented real-fund feature as complete.
-    if (request.orderType === 'LIMIT') {
-      return {
-        externalOrderId: '',
-        status: 'REJECTED',
-        errorMessage: 'Limit orders are temporarily unavailable while execution synchronization is being completed. Use a market order for now.',
-      };
-    }
-
     const account = await exchangeAccountService.requireVerifiedAccount(request.userId, request.exchange);
     const settings = await settingsService.get(request.userId);
 
@@ -72,13 +59,17 @@ export class TradingService {
     const slippageBps = request.slippageBpsOverride ?? settings.defaultSlippageBps;
     const notionalUsd = request.collateralUsd * leverage;
 
+    if (request.orderType === 'LIMIT' && request.limitPrice === undefined) {
+      return { externalOrderId: '', status: 'REJECTED', errorMessage: 'A limit price is required for limit orders.' };
+    }
+
     // Reference price for sizing: the limit price if given, otherwise the
     // current mark price. This does NOT go through Flight/Rise - it's a
     // read-only market data lookup, which is fine to keep on the existing
     // adapter (no funds move on a read). See phoenix.market-adapter.ts.
     const market = await marketQueryService.getMarket(request.exchange, request.market);
     const referencePrice = request.limitPrice ?? market?.markPrice;
-    if (!referencePrice || referencePrice <= 0) {
+    if (!Number.isFinite(referencePrice) || !referencePrice || referencePrice <= 0) {
       return { externalOrderId: '', status: 'REJECTED', errorMessage: `Could not determine a price for ${request.market}.` };
     }
     if (request.stopLossPrice !== undefined || request.takeProfitPrice !== undefined) {
@@ -108,6 +99,7 @@ export class TradingService {
       type: request.orderType ?? 'MARKET',
       side: request.side === 'LONG' ? 'BUY' : 'SELL',
       size: baseUnits,
+      price: request.orderType === 'LIMIT' ? referencePrice : undefined,
       leverage,
       slippageBps,
       idempotencyKey,
@@ -130,8 +122,8 @@ export class TradingService {
         collateralUsd: request.collateralUsd,
         marginMode: (settings as any).defaultMarginMode ?? 'CROSS',
         idempotencyKey,
-        type: 'market',
-        priceUsd: request.limitPrice ? String(request.limitPrice) : undefined,
+        type: request.orderType === 'LIMIT' ? 'limit' : 'market',
+        priceUsd: request.orderType === 'LIMIT' ? String(referencePrice) : undefined,
         stopLossPrice: request.stopLossPrice ? String(request.stopLossPrice) : undefined,
         takeProfitPrice: request.takeProfitPrice ? String(request.takeProfitPrice) : undefined,
         slippageBps,
@@ -153,7 +145,6 @@ export class TradingService {
           exchangeOrderId: execResult.signature,
           txSignature: execResult.signature,
         });
-        await notificationService.notify(request.userId, 'TRADE_FILLED', `✅ Limit order for ${request.market} is now resting on Phoenix.`);
         return { externalOrderId: execResult.signature ?? '', status: 'SUBMITTED', txSignature: execResult.signature };
       }
 
