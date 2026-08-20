@@ -1,15 +1,14 @@
 import { prisma } from '../database/prisma';
-import { UserSettings, OrderType, Prisma } from '@prisma/client';
+import { UserSettings, OrderType } from '@prisma/client';
 import { MarginMode } from '../types/exchange.types';
 import { MAX_LEVERAGE_HARD_CAP, MIN_LEVERAGE } from '../constants';
 import { log } from '../logger/logger';
 
 export class SettingsService {
-  async get(userId: number): Promise<UserSettings & { defaultCollateralUsd: Prisma.Decimal }> {
+  async get(userId: number): Promise<UserSettings> {
     const existing = await prisma.userSettings.findUnique({ where: { userId } });
-    if (existing) return existing as UserSettings & { defaultCollateralUsd: Prisma.Decimal };
-    const created = await prisma.userSettings.create({ data: { userId } });
-    return created as UserSettings & { defaultCollateralUsd: Prisma.Decimal };
+    if (existing) return existing;
+    return prisma.userSettings.create({ data: { userId } });
   }
 
   async setDefaultLeverage(userId: number, leverage: number): Promise<UserSettings> {
@@ -33,11 +32,9 @@ export class SettingsService {
   }
 
   async setDefaultMarginMode(userId: number, marginMode: MarginMode): Promise<UserSettings> {
-    // Cast keeps source builds working until `prisma generate` runs for the
-    // new migration, while preserving the database enum at runtime.
     return prisma.userSettings.update({
       where: { userId },
-      data: { defaultMarginMode: marginMode } as any,
+      data: { defaultMarginMode: marginMode },
     });
   }
 
@@ -68,17 +65,16 @@ export class SettingsService {
     return prisma.userSettings.update({ where: { userId }, data: { maxLeverage } });
   }
 
-  async setDefaultCollateralUsd(userId: number, amountUsd: number): Promise<UserSettings & { defaultCollateralUsd: Prisma.Decimal }> {
+  async setDefaultCollateralUsd(userId: number, amountUsd: number): Promise<UserSettings> {
     if (!Number.isFinite(amountUsd) || amountUsd <= 0) {
       throw new Error('Default collateral must be a positive USD amount.');
     }
     const updated = await prisma.userSettings.update({
       where: { userId },
-      // Cast keeps this branch buildable until the local Prisma client is regenerated after migration.
-      data: { defaultCollateralUsd: amountUsd } as any,
+      data: { defaultCollateralUsd: amountUsd },
     });
     await log.info('SYSTEM', 'Updated default group-trade collateral', { userId, amountUsd });
-    return updated as UserSettings & { defaultCollateralUsd: Prisma.Decimal };
+    return updated;
   }
 }
 

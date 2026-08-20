@@ -2,6 +2,10 @@ import { MiddlewareFn } from 'telegraf';
 import { BotContext } from '../types/bot.types';
 import { userRepository } from '../users/user.repository';
 
+export function isBlockedUserStatus(status: string): boolean {
+  return status === 'SUSPENDED' || status === 'BANNED';
+}
+
 /**
  * Runs after /start has had a chance to register the user. If no user
  * exists yet (e.g. someone sends a command before /start), we don't
@@ -12,6 +16,10 @@ export const identify: MiddlewareFn<BotContext> = async (ctx, next) => {
   const fromId = ctx.from?.id;
   if (fromId) {
     const user = await userRepository.findByTelegramId(BigInt(fromId));
+    if (user && isBlockedUserStatus(user.status)) {
+      await ctx.reply('Your TradePilot account is currently unavailable. Contact support if you believe this is an error.');
+      return;
+    }
     if (user) ctx.appUserId = user.id;
   }
   return next();

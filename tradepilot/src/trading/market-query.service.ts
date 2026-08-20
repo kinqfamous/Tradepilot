@@ -4,8 +4,7 @@ import { MarketInfo, AccountBalance, ExchangePosition } from '../types/exchange.
 
 export class MarketQueryService {
   async listMarkets(exchange: string, forceRefresh = false): Promise<MarketInfo[]> {
-    void forceRefresh;
-    return exchangeRegistry.get(exchange).market.listMarkets();
+    return exchangeRegistry.get(exchange).market.listMarkets(forceRefresh);
   }
 
   async getMarket(exchange: string, symbol: string): Promise<MarketInfo | null> {

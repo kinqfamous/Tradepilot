@@ -3,6 +3,8 @@ export const SCENE_IDS = {
   LINK_ACCOUNT: 'link-account-wizard',
   TRADE: 'trade-wizard',
   CLOSE_POSITION: 'close-position-wizard',
+  PROTECTION: 'protection-wizard',
+  PENDING_LIMIT_EDIT: 'pending-limit-edit-wizard',
   SETTINGS: 'settings-wizard',
   BROADCAST: 'broadcast-wizard',
   WITHDRAW: 'withdraw-wizard',

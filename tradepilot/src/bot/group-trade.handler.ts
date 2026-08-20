@@ -1,9 +1,7 @@
 import { Markup, Telegraf } from 'telegraf';
 import { config } from '../config/env';
 import { SCENE_IDS } from '../constants';
-import { settingsService } from '../settings/settings.service';
 import { marketQueryService } from '../trading/market-query.service';
-import { tradingService } from '../trading/trading.service';
 import { BotContext } from '../types/bot.types';
 import { formatNumber, formatPercent } from '../utils/format';
 import { exchangeAccountService } from '../users/exchange-account.service';
@@ -41,29 +39,29 @@ async function handleDirectInstruction(
     await ctx.reply(prompt.text, prompt.extra);
     return;
   }
-  const settings = await settingsService.get(verified.userId);
-  await ctx.reply(
-    `🔍 *Confirm ${side} ${market.symbol}*\n\n` +
-      `Collateral: $${settings.defaultCollateralUsd}\n` +
-      `Leverage: ${settings.defaultLeverage}x\n` +
-      `Mark price: $${formatNumber(market.markPrice)}\n\n` +
-      `<a href="tg://user?id=${fromId}">Only this user</a> can confirm this trade.`,
-    {
-      parse_mode: 'HTML',
-      ...Markup.inlineKeyboard([
-        Markup.button.callback('✅ Confirm', `gtconfirm|${fromId}|${side}|${market.symbol}`),
-        Markup.button.callback('❌ Cancel', `gtcancel|${fromId}`),
-      ]),
-    },
-  );
+  await continueTradePrivately(ctx, side, market.symbol);
 }
 
-function isOwner(ctx: BotContext, telegramId: number): boolean {
-  return ctx.from?.id === telegramId;
-}
-
-async function rejectNonOwner(ctx: BotContext): Promise<void> {
-  await ctx.answerCbQuery("This confirmation isn't yours.", { show_alert: true });
+async function continueTradePrivately(
+  ctx: BotContext,
+  side: 'LONG' | 'SHORT',
+  symbol: string,
+): Promise<void> {
+  if (!ctx.from) return;
+  try {
+    await ctx.telegram.sendMessage(
+      ctx.from.id,
+      `Ready to ${side.toLowerCase()} ${symbol}? Review the full order and confirm it here privately.`,
+      Markup.inlineKeyboard([Markup.button.callback('▶️ Continue', `continue_trade|${side}|${symbol}`)]),
+    );
+    await ctx.reply('📩 I sent you a private message to continue securely.');
+  } catch {
+    const username = config.telegram.botUsername.replace(/^@/, '');
+    await ctx.reply(
+      'Please start a private chat with me first.',
+      Markup.inlineKeyboard([Markup.button.url('Open TradePilot', `https://t.me/${username}`)]),
+    );
+  }
 }
 
 export function registerGroupTradeHandlers(bot: Telegraf<BotContext>): void {
@@ -106,16 +104,7 @@ export function registerGroupTradeHandlers(bot: Telegraf<BotContext>): void {
       await ctx.reply(prompt.text, prompt.extra);
       return;
     }
-    try {
-      await ctx.telegram.sendMessage(ctx.from.id, `Ready to ${side.toLowerCase()} ${symbol}?`, {
-        ...Markup.inlineKeyboard([Markup.button.callback('▶️ Continue', `continue_trade|${side}|${symbol}`)]),
-      });
-      await ctx.reply('📩 I sent you a private message to continue your trade.');
-    } catch {
-      await ctx.reply('Please start a private chat with me first.', Markup.inlineKeyboard([
-        Markup.button.url('Open TradePilot', `https://t.me/${config.telegram.botUsername}`),
-      ]));
-    }
+    await continueTradePrivately(ctx, side, symbol);
   });
 
   bot.action(/^continue_trade\|(LONG|SHORT)\|(.+)$/, async (ctx) => {
@@ -126,39 +115,6 @@ export function registerGroupTradeHandlers(bot: Telegraf<BotContext>): void {
     return ctx.scene.enter(SCENE_IDS.TRADE, { exchange: config.defaultExchange, market: match[2], side: match[1] });
   });
 
-  bot.action(/^gtconfirm\|(\d+)\|(LONG|SHORT)\|(.+)$/, async (ctx) => {
-    if (!ctx.callbackQuery || !('data' in ctx.callbackQuery)) return;
-    const match = /^gtconfirm\|(\d+)\|(LONG|SHORT)\|(.+)$/.exec(ctx.callbackQuery.data);
-    if (!match) return;
-    const telegramId = Number(match[1]);
-    if (!isOwner(ctx, telegramId)) return rejectNonOwner(ctx);
-    await ctx.answerCbQuery();
-    const user = await userRepository.findByTelegramId(BigInt(telegramId));
-    if (!user) return;
-    const settings = await settingsService.get(user.id);
-    await ctx.reply('⏳ Submitting trade...');
-    const result = await tradingService.open({
-      userId: user.id,
-      exchange: config.defaultExchange,
-      market: match[3],
-      side: match[2] as 'LONG' | 'SHORT',
-      collateralUsd: Number(settings.defaultCollateralUsd),
-      leverage: Number(settings.defaultLeverage),
-      orderType: 'MARKET',
-    });
-    await ctx.reply(result.status === 'REJECTED'
-      ? `❌ Trade failed: ${result.errorMessage}`
-      : `✅ ${match[2]} ${match[3]} submitted at ${settings.defaultLeverage}x.`);
-  });
-
-  bot.action(/^gtcancel\|(\d+)$/, async (ctx) => {
-    if (!ctx.callbackQuery || !('data' in ctx.callbackQuery)) return;
-    const match = /^gtcancel\|(\d+)$/.exec(ctx.callbackQuery.data);
-    if (!match) return;
-    if (!isOwner(ctx, Number(match[1]))) return rejectNonOwner(ctx);
-    await ctx.answerCbQuery();
-    await ctx.reply('Cancelled.');
-  });
 }
 
 const TICKER_ALIASES: Record<string, string> = {

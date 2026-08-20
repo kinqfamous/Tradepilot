@@ -13,6 +13,29 @@ function state(ctx: BotContext): TradeWizardState {
   return ctx.wizard.state as TradeWizardState;
 }
 
+async function currentMarkPriceText(exchange: string, symbol?: string): Promise<string> {
+  if (!symbol) return '';
+  try {
+    const market = (await marketQueryService.listMarkets(exchange, true))
+      .find((candidate) => candidate.symbol === symbol);
+    return market && Number.isFinite(market.markPrice) && market.markPrice > 0
+      ? `\n\nCurrent ${market.symbol} mark price: *$${formatNumber(market.markPrice)}*`
+      : '';
+  } catch {
+    // Market data is informative here; it must not trap the user in the wizard.
+    return '\n\nCurrent mark price is temporarily unavailable.';
+  }
+}
+
+async function leverageLimits(exchange: string, symbol: string | undefined, userCap: number) {
+  if (!symbol) return { marketMax: userCap, effectiveMax: userCap };
+  const market = await marketQueryService.getMarket(exchange, symbol);
+  const marketMax = market && Number.isFinite(market.maxLeverage) && market.maxLeverage > 0
+    ? market.maxLeverage
+    : userCap;
+  return { marketMax, effectiveMax: Math.min(marketMax, userCap) };
+}
+
 // Step map: 0 entry; 1 ticker input and market resolution; 2 side selection;
 // 3 collateral; 4 leverage; 5 order type; 6 limit price; 7 stop loss;
 // 8 take profit; 9 confirmation and execution.
@@ -119,7 +142,21 @@ export const tradeScene = new Scenes.WizardScene<BotContext>(
     state(ctx).collateralUsd = parsed.value;
 
     const settings = await settingsService.get(ctx.appUserId!);
-    await ctx.reply(`What leverage? (1-${settings.maxLeverage}x, e.g. ${settings.defaultLeverage})`);
+    const userCap = Number(settings.maxLeverage);
+    const limits = await leverageLimits(
+      state(ctx).exchange ?? config.defaultExchange,
+      state(ctx).market,
+      userCap,
+    );
+    state(ctx).effectiveMaxLeverage = limits.effectiveMax;
+    const example = Math.min(Number(settings.defaultLeverage), limits.effectiveMax);
+    await ctx.reply(
+      `What leverage?\n\n` +
+      `${state(ctx).market} maximum: *${formatNumber(limits.marketMax, 2)}x*\n` +
+      `Your configured cap: *${formatNumber(userCap, 2)}x*\n` +
+      `Available range: *1-${formatNumber(limits.effectiveMax, 2)}x* (e.g. ${formatNumber(example, 2)})`,
+      { parse_mode: 'Markdown' },
+    );
     return ctx.wizard.next();
   },
   // Step 4: leverage
@@ -140,13 +177,24 @@ export const tradeScene = new Scenes.WizardScene<BotContext>(
       await ctx.reply(`${parsed.error} Or /cancel.`);
       return;
     }
-    if (parsed.value > Number(settings.maxLeverage)) {
-      await ctx.reply(`Your max leverage cap is ${settings.maxLeverage}x. Enter a lower value, or /cancel.`);
+    const effectiveMax = state(ctx).effectiveMaxLeverage ??
+      (await leverageLimits(
+          state(ctx).exchange ?? config.defaultExchange,
+          state(ctx).market,
+          Number(settings.maxLeverage),
+        )).effectiveMax;
+    if (parsed.value > effectiveMax) {
+      await ctx.reply(
+        `${state(ctx).market ?? 'This market'} allows a maximum of ${formatNumber(effectiveMax, 2)}x ` +
+        `after applying your configured cap. Enter a lower value, or /cancel.`,
+      );
       return;
     }
 
     state(ctx).leverage = parsed.value;
-    await ctx.reply('Order type?', orderTypeKeyboard);
+    const exchange = state(ctx).exchange ?? config.defaultExchange;
+    const currentPrice = await currentMarkPriceText(exchange, state(ctx).market);
+    await ctx.reply(`Order type?${currentPrice}`, { parse_mode: 'Markdown', ...orderTypeKeyboard });
     return ctx.wizard.next();
   },
   // Step 5: order type -> branches to step 6 (limit price) or jumps to step 7 (stop loss)

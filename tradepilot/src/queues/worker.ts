@@ -1,5 +1,5 @@
 import { Worker } from 'bullmq';
-import { Telegraf } from 'telegraf';
+import { Input, Telegraf } from 'telegraf';
 import { createQueueConnection } from '../database/redis';
 import { config } from '../config/env';
 import { NOTIFICATION_QUEUE_NAME } from '../constants';
@@ -8,6 +8,9 @@ import { prisma } from '../database/prisma';
 import { notificationService } from '../notifications/notification.service';
 import { fileLogger } from '../logger/logger';
 import { builderFeeService } from '../fees/builder-fee.service';
+import { pnlCardService } from '../pnl/pnl-card.service';
+import { limitOrderReconciliationService } from '../trading/limit-order-reconciliation.service';
+import { positionEventReconciliationService } from '../trading/position-event-reconciliation.service';
 
 const telegram = new Telegraf(config.telegram.botToken).telegram;
 
@@ -17,7 +20,20 @@ const worker = new Worker<NotificationJobData>(
     const user = await prisma.user.findUnique({ where: { id: job.data.userId } });
     if (!user) return;
 
-    await telegram.sendMessage(user.telegramId.toString(), job.data.message, { parse_mode: 'Markdown' });
+    if (job.data.card) {
+      const card = pnlCardService.render({
+        ...job.data.card,
+        exitPrice: job.data.card.exitPrice ?? job.data.card.marketPrice,
+        status: job.data.card.eventType ?? 'ENTRY',
+      });
+      await telegram.sendPhoto(
+        user.telegramId.toString(),
+        Input.fromBuffer(card, `tradepilot-${job.data.card.market}-entry.png`),
+        { caption: job.data.message, parse_mode: 'Markdown' },
+      );
+    } else {
+      await telegram.sendMessage(user.telegramId.toString(), job.data.message, { parse_mode: 'Markdown' });
+    }
     await notificationService.markDelivered(job.data.notificationId);
   },
   {
@@ -53,11 +69,37 @@ void reconcileFees();
 const feeReconciliationTimer = setInterval(() => void reconcileFees(), 5 * 60_000);
 feeReconciliationTimer.unref();
 
+const reconcileLimitOrders = async () => {
+  try {
+    await limitOrderReconciliationService.reconcile();
+  } catch (error) {
+    fileLogger.error({ error }, 'Phoenix limit-order reconciliation failed');
+  }
+};
+void reconcileLimitOrders();
+const limitOrderReconciliationTimer = setInterval(() => void reconcileLimitOrders(), 30_000);
+limitOrderReconciliationTimer.unref();
+
+const reconcilePositionEvents = async () => {
+  try {
+    await positionEventReconciliationService.reconcile();
+  } catch (error) {
+    fileLogger.error({ error }, 'Phoenix position-event reconciliation failed');
+  }
+};
+void reconcilePositionEvents();
+const positionEventReconciliationTimer = setInterval(() => void reconcilePositionEvents(), 30_000);
+positionEventReconciliationTimer.unref();
+
 process.once('SIGINT', () => {
   clearInterval(feeReconciliationTimer);
+  clearInterval(limitOrderReconciliationTimer);
+  clearInterval(positionEventReconciliationTimer);
   return worker.close();
 });
 process.once('SIGTERM', () => {
   clearInterval(feeReconciliationTimer);
+  clearInterval(limitOrderReconciliationTimer);
+  clearInterval(positionEventReconciliationTimer);
   return worker.close();
 });

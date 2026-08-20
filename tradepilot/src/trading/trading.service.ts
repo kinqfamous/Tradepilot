@@ -120,7 +120,7 @@ export class TradingService {
         baseUnits: String(baseUnits),
         notionalUsd,
         collateralUsd: request.collateralUsd,
-        marginMode: (settings as any).defaultMarginMode ?? 'CROSS',
+        marginMode: settings.defaultMarginMode,
         idempotencyKey,
         type: request.orderType === 'LIMIT' ? 'limit' : 'market',
         priceUsd: request.orderType === 'LIMIT' ? String(referencePrice) : undefined,
@@ -145,6 +145,25 @@ export class TradingService {
           exchangeOrderId: execResult.signature,
           txSignature: execResult.signature,
         });
+        const pendingProtection = async (type: 'STOP_LOSS' | 'TAKE_PROFIT', triggerPrice: number) =>
+          tradingRepository.createOrder({
+            userId: request.userId,
+            exchangeAccountId: account.id,
+            exchange: request.exchange,
+            market: request.market,
+            type,
+            side: request.side === 'LONG' ? 'SELL' : 'BUY',
+            status: 'SUBMITTED',
+            size: baseUnits,
+            triggerPrice,
+            leverage,
+            slippageBps,
+            exchangeOrderId: execResult.signature,
+            txSignature: execResult.signature,
+            idempotencyKey: `${idempotencyKey}-${type === 'STOP_LOSS' ? 'sl' : 'tp'}`,
+          });
+        if (request.stopLossPrice !== undefined) await pendingProtection('STOP_LOSS', request.stopLossPrice);
+        if (request.takeProfitPrice !== undefined) await pendingProtection('TAKE_PROFIT', request.takeProfitPrice);
         return { externalOrderId: execResult.signature ?? '', status: 'SUBMITTED', txSignature: execResult.signature };
       }
 
@@ -345,7 +364,7 @@ export class TradingService {
         closePrice: referencePrice,
         positionSide: exchangePosition.side,
         leverage: exchangePosition.leverage,
-        closedSize: baseUnitsToClose,
+        marginMode: exchangePosition.marginMode,
       };
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);

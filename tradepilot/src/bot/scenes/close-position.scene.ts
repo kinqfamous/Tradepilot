@@ -165,13 +165,13 @@ export const closePositionScene = new Scenes.WizardScene<BotContext>(
           result.closePrice !== undefined &&
           result.positionSide !== undefined &&
           result.leverage !== undefined &&
-          result.closedSize !== undefined
+          result.marginMode !== undefined
         ) {
           const card = pnlCardService.render({
             market: s.market,
             side: result.positionSide,
             leverage: result.leverage,
-            size: result.closedSize,
+            marginMode: result.marginMode,
             pnlPercent: result.realizedPnlPercent,
             entryPrice: result.entryPrice,
             exitPrice: result.closePrice,

@@ -78,6 +78,10 @@ export function createFakeFeeRepository() {
       return id ? events.get(id) ?? null : null;
     }),
 
+    findByOrderId: vi.fn(async (orderId: number) =>
+      [...events.values()].find((event) => event.orderId === orderId) ?? null,
+    ),
+
     createExpected: vi.fn(async (data: Partial<FeeEvent> & { idempotencyKey: string }) => {
       const event = makeFeeEvent(data);
       events.set(event.id, event);

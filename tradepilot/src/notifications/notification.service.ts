@@ -1,6 +1,7 @@
 import { prisma } from '../database/prisma';
 import { NotificationType } from '@prisma/client';
 import { notificationQueue } from '../queues/notification.queue';
+import { NotificationJobData } from '../queues/notification.queue';
 import { log } from '../logger/logger';
 
 export class NotificationService {
@@ -9,6 +10,7 @@ export class NotificationService {
     type: NotificationType,
     message: string,
     metadata?: Record<string, unknown>,
+    card?: NotificationJobData['card'],
   ): Promise<void> {
     const settings = await prisma.userSettings.findUnique({ where: { userId } });
     if (settings && !settings.notificationsOn) return;
@@ -26,6 +28,7 @@ export class NotificationService {
       notificationId: notification.id,
       userId,
       message,
+      card,
     });
 
     await log.info('SYSTEM', 'Notification queued', { userId, type });

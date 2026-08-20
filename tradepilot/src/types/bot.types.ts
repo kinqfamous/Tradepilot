@@ -19,6 +19,7 @@ export interface TradeWizardState {
   side?: 'LONG' | 'SHORT';
   collateralUsd?: number;
   leverage?: number;
+  effectiveMaxLeverage?: number;
   orderType?: 'MARKET' | 'LIMIT';
   limitPrice?: number;
   stopLossPrice?: number;
@@ -29,6 +30,18 @@ export interface ClosePositionWizardState {
   exchange?: string;
   market?: string;
   percent?: number;
+}
+
+export interface ProtectionWizardState {
+  exchange?: string;
+  market?: string;
+  type?: 'STOP_LOSS' | 'TAKE_PROFIT';
+}
+
+export interface PendingLimitEditWizardState {
+  exchange?: string;
+  orderId?: number;
+  kind?: 'ENTRY' | 'STOP_LOSS' | 'TAKE_PROFIT';
 }
 
 export interface SettingsWizardState {

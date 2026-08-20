@@ -193,6 +193,10 @@ export const onboardingScene = new Scenes.WizardScene<BotContext>(
     }
 
     if (data === 'link_import') {
+      if (ctx.chat?.type !== 'private') {
+        await ctx.reply('For your security, wallet import is only available in a private chat with this bot.');
+        return ctx.scene.leave();
+      }
       state(ctx).linkMethod = 'import';
       await ctx.reply(
         '📥 Send the *base58 private key* of the Solana wallet you want to link.\n\n' +
@@ -204,6 +208,10 @@ export const onboardingScene = new Scenes.WizardScene<BotContext>(
   },
   // Step 4: import wallet private key
   async (ctx) => {
+    if (ctx.chat?.type !== 'private') {
+      await ctx.reply('For your security, wallet import is only available in a private chat with this bot.');
+      return ctx.scene.leave();
+    }
     if (!ctx.message || !('text' in ctx.message)) {
       await ctx.reply('Please send the private key as text, or /cancel.');
       return;

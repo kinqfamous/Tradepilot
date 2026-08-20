@@ -7,6 +7,7 @@ import { ticksToUsdWithMarketParams } from '@ellipsis-labs/rise';
 interface PhoenixTraderStateResponse {
   snapshot: {
     subaccounts: Array<{
+      subaccountIndex?: number;
       collateral: string;
       // Phoenix omits `positions` entirely for empty child/isolated
       // subaccounts instead of returning an empty array.
@@ -144,7 +145,8 @@ export class PhoenixPositionAdapter implements PositionAdapter {
     const decimalsBySymbol = new Map(markets.map((market) => [market.symbol, market.baseLotsDecimals]));
     const marksBySymbol = new Map(marketStats.markets.map((market) => [market.symbol, Number(market.mark_price)]));
 
-    const positionsBySubaccount = response.snapshot.subaccounts.map((account, subaccountIndex) => {
+    const positionsBySubaccount = response.snapshot.subaccounts.map((account, arrayIndex) => {
+      const subaccountIndex = account.subaccountIndex ?? arrayIndex;
       const activePositions = (account.positions ?? []).flatMap((position) => {
         const baseLotsDecimals = decimalsBySymbol.get(position.symbol);
         if (baseLotsDecimals === undefined) {

@@ -41,6 +41,7 @@ export interface FlightOrderExecutor {
   getPlainClient: typeof flightClient.getPlainClient;
   isIsolatedOnlyMarket: typeof flightClient.isIsolatedOnlyMarket;
   buildIsolatedMarketOrderIxs: typeof flightClient.buildIsolatedMarketOrderIxs;
+  buildIsolatedLimitOrderIxs: typeof flightClient.buildIsolatedLimitOrderIxs;
   buildFlightRoutedMarketOrderIx: typeof flightClient.buildFlightRoutedMarketOrderIx;
   buildFlightRoutedMarketOrderWithProtectionsIxs?: typeof flightClient.buildFlightRoutedMarketOrderWithProtectionsIxs;
   buildFlightRoutedLimitOrderIx: typeof flightClient.buildFlightRoutedLimitOrderIx;
@@ -57,6 +58,7 @@ const defaultExecutor: FlightOrderExecutor = {
   getPlainClient: flightClient.getPlainClient,
   isIsolatedOnlyMarket: flightClient.isIsolatedOnlyMarket,
   buildIsolatedMarketOrderIxs: flightClient.buildIsolatedMarketOrderIxs,
+  buildIsolatedLimitOrderIxs: flightClient.buildIsolatedLimitOrderIxs,
   buildFlightRoutedMarketOrderIx: flightClient.buildFlightRoutedMarketOrderIx,
   buildFlightRoutedMarketOrderWithProtectionsIxs: flightClient.buildFlightRoutedMarketOrderWithProtectionsIxs,
   buildFlightRoutedLimitOrderIx: flightClient.buildFlightRoutedLimitOrderIx,
@@ -154,10 +156,7 @@ export class PhoenixFlightExecutionService {
         // Phoenix rejects isolated-only commodities when submitted through
         // cross subaccount 0. Its isolated API route allocates or finds the
         // correct child subaccount and includes all setup instructions.
-        if (params.type !== 'market') {
-          throw new Error('Phoenix isolated-margin markets currently support market orders only.');
-        }
-        instructions = await this.executor.buildIsolatedMarketOrderIxs({
+        const isolatedParams = {
           client,
           traderAuthority,
           symbol: params.symbol,
@@ -167,7 +166,13 @@ export class PhoenixFlightExecutionService {
           stopLossPrice: params.stopLossPrice,
           takeProfitPrice: params.takeProfitPrice,
           reduceOnly: params.reduceOnly,
-        });
+        };
+        instructions = params.type === 'market'
+          ? await this.executor.buildIsolatedMarketOrderIxs(isolatedParams)
+          : await this.executor.buildIsolatedLimitOrderIxs({
+              ...isolatedParams,
+              priceUsd: params.priceUsd!,
+            });
       } else if (routeThroughFlight && feeEvent.builderAuthority) {
         instructions = params.type === 'market'
           ? hasProtections

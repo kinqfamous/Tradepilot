@@ -177,6 +177,11 @@ export interface BuildIsolatedMarketOrderParams {
   reduceOnly?: boolean;
 }
 
+/** Parameters for Phoenix's server-built isolated-limit-order route. */
+export interface BuildIsolatedLimitOrderParams extends BuildIsolatedMarketOrderParams {
+  priceUsd: string;
+}
+
 /**
  * Phoenix commodities such as WTIOIL are isolated-only. They cannot be sent
  * to cross subaccount 0, even if that is the user's normal trading account.
@@ -194,22 +199,7 @@ export function isIsolatedOnlyMarket(client: PhoenixRiseClient, symbol: string):
  * route also inherits the Flight configuration from the supplied client.
  */
 export async function buildIsolatedMarketOrderIxs(params: BuildIsolatedMarketOrderParams): Promise<unknown[]> {
-  const quantity = Number(params.baseUnits);
-  if (!Number.isFinite(quantity) || quantity <= 0) {
-    throw new Error('Isolated market order quantity must be a positive number.');
-  }
-
-  let transferAmount: number | undefined;
-  if (!params.reduceOnly) {
-    if (!Number.isFinite(params.collateralUsd) || (params.collateralUsd ?? 0) <= 0) {
-      throw new Error('Collateral is required to open an isolated Phoenix position.');
-    }
-    // Phoenix collateral is denominated in USDC quote lots (six decimals).
-    transferAmount = Math.round((params.collateralUsd ?? 0) * 1_000_000);
-    if (!Number.isSafeInteger(transferAmount) || transferAmount <= 0) {
-      throw new Error('Isolated position collateral is outside Phoenix\'s supported range.');
-    }
-  }
+  const { quantity, transferAmount } = isolatedOrderAmounts(params);
 
   return params.client.api.orders().placeIsolatedMarketOrder({
     authority: params.traderAuthority,
@@ -227,6 +217,57 @@ export async function buildIsolatedMarketOrderIxs(params: BuildIsolatedMarketOrd
         }
       : undefined,
   });
+}
+
+/** Builds Phoenix's complete isolated-account setup plus a resting limit order. */
+export async function buildIsolatedLimitOrderIxs(params: BuildIsolatedLimitOrderParams): Promise<unknown[]> {
+  const { quantity, transferAmount } = isolatedOrderAmounts(params);
+  const price = Number(params.priceUsd);
+  if (!Number.isFinite(price) || price <= 0) {
+    throw new Error('Isolated limit order price must be a positive number.');
+  }
+
+  return params.client.api.orders().placeIsolatedLimitOrder({
+    authority: params.traderAuthority,
+    symbol: params.symbol,
+    side: params.side,
+    price,
+    quantity,
+    transferAmount,
+    pdaIndex: DEFAULT_TRADER_PDA_INDEX,
+    isReduceOnly: params.reduceOnly,
+    tpSl: params.stopLossPrice || params.takeProfitPrice
+      ? {
+          stopLossTriggerPrice: params.stopLossPrice ? Number(params.stopLossPrice) : undefined,
+          takeProfitTriggerPrice: params.takeProfitPrice ? Number(params.takeProfitPrice) : undefined,
+          quantity,
+        }
+      : undefined,
+  });
+}
+
+function isolatedOrderAmounts(params: BuildIsolatedMarketOrderParams): {
+  quantity: number;
+  transferAmount: number | undefined;
+} {
+  const quantity = Number(params.baseUnits);
+  if (!Number.isFinite(quantity) || quantity <= 0) {
+    throw new Error('Isolated order quantity must be a positive number.');
+  }
+
+  let transferAmount: number | undefined;
+  if (!params.reduceOnly) {
+    if (!Number.isFinite(params.collateralUsd) || (params.collateralUsd ?? 0) <= 0) {
+      throw new Error('Collateral is required to open an isolated Phoenix position.');
+    }
+    // Phoenix collateral is denominated in USDC quote lots (six decimals).
+    transferAmount = Math.round((params.collateralUsd ?? 0) * 1_000_000);
+    if (!Number.isSafeInteger(transferAmount) || transferAmount <= 0) {
+      throw new Error('Isolated position collateral is outside Phoenix\'s supported range.');
+    }
+  }
+
+  return { quantity, transferAmount };
 }
 
 function hasProtectionOrders(params: BuildRoutedOrderParams): boolean {

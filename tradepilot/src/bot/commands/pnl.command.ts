@@ -1,4 +1,4 @@
-import { Input } from 'telegraf';
+import { Input, Markup } from 'telegraf';
 import { BotContext } from '../../types/bot.types';
 import { config } from '../../config/env';
 import { marketQueryService } from '../../trading/market-query.service';
@@ -25,13 +25,23 @@ export async function pnlCommand(ctx: BotContext): Promise<void> {
         market: position.market,
         side: position.side,
         leverage: position.leverage,
-        size: position.size,
+        marginMode: position.marginMode,
         pnlPercent: position.roePercent,
         entryPrice: position.entryPrice,
         exitPrice: position.markPrice,
         status: 'OPEN',
       });
-      await ctx.replyWithPhoto(Input.fromBuffer(card, `tradepilot-${position.market}-open-pnl.png`));
+      const photo = Input.fromBuffer(card, `tradepilot-${position.market}-open-pnl.png`);
+      if (ctx.chat?.type === 'private') {
+        await ctx.replyWithPhoto(
+          photo,
+          Markup.inlineKeyboard([
+            [Markup.button.callback(`🔴 Close ${position.market}`, `close_position|${position.market}|100`)],
+          ]),
+        );
+      } else {
+        await ctx.replyWithPhoto(photo);
+      }
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

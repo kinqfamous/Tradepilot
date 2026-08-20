@@ -15,11 +15,16 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
+  // Notification delivery and Phoenix fill reconciliation are required bot
+  // functionality, not an optional deployment companion. Starting them here
+  // ensures TP/SL/liquidation cards work under the normal dev/start commands.
+  await import('./queues/worker');
+
   const bot = createBot();
 
   await bot.launch();
   await log.info('SYSTEM', 'TradePilot bot started', { admins: config.telegram.adminIds });
-  fileLogger.info('TradePilot is running. Run `npm run worker` separately to deliver notifications.');
+  fileLogger.info('TradePilot is running with notifications and fill reconciliation enabled.');
 
   const shutdown = async (signal: string) => {
     fileLogger.info(`Received ${signal}, shutting down gracefully...`);

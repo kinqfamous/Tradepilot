@@ -84,7 +84,7 @@ export interface PlaceOrderResult {
   closePrice?: number;
   positionSide?: PositionSide;
   leverage?: number;
-  closedSize?: number;
+  marginMode?: MarginMode;
   errorMessage?: string;
 }
 

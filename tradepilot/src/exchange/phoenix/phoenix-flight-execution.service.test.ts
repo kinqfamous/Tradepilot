@@ -31,6 +31,7 @@ function makeFakeExecutor(overrides: Partial<FlightOrderExecutor> = {}): FlightO
     getPlainClient: vi.fn(async () => 'plain-client' as any),
     isIsolatedOnlyMarket: vi.fn(() => false),
     buildIsolatedMarketOrderIxs: vi.fn(async () => ['isolated-market-ix'] as any),
+    buildIsolatedLimitOrderIxs: vi.fn(async () => ['isolated-limit-ix'] as any),
     buildFlightRoutedMarketOrderIx: vi.fn(async () => 'flight-market-ix' as any),
     buildFlightRoutedLimitOrderIx: vi.fn(async () => 'flight-limit-ix' as any),
     buildPlainMarketOrderIx: vi.fn(async () => 'plain-market-ix' as any),
@@ -80,6 +81,27 @@ describe('PhoenixFlightExecutionService - Flight routing', () => {
       expect.objectContaining({ symbol: 'SOL-PERP', collateralUsd: 50 }),
     );
     expect(executor.buildFlightRoutedMarketOrderIx).not.toHaveBeenCalled();
+  });
+
+  it('uses Phoenix\'s isolated-limit route for isolated-margin limit orders', async () => {
+    const executor = makeFakeExecutor({
+      isIsolatedOnlyMarket: vi.fn(() => true),
+    });
+    const service = new PhoenixFlightExecutionService(makeFakeFeeService() as any, executor);
+
+    const result = await service.executeOrder(baseParams({
+      symbol: 'WTIOIL',
+      type: 'limit',
+      priceUsd: '72.50',
+      collateralUsd: 50,
+    }));
+
+    expect(result.success).toBe(true);
+    expect(result.settled).toBe(false);
+    expect(executor.buildIsolatedLimitOrderIxs).toHaveBeenCalledWith(
+      expect.objectContaining({ symbol: 'WTIOIL', priceUsd: '72.50', collateralUsd: 50 }),
+    );
+    expect(executor.buildIsolatedMarketOrderIxs).not.toHaveBeenCalled();
   });
 
   it('routes market orders through Flight when fees are enabled and a builder is configured', async () => {

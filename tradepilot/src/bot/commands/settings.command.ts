@@ -15,7 +15,7 @@ export async function settingsCommand(ctx: BotContext): Promise<void> {
     `Default Group-Trade Amount: $${settings.defaultCollateralUsd}\n` +
     `Default Slippage: ${settings.defaultSlippageBps} bps\n` +
     `Default Order Type: ${settings.defaultOrderType}\n` +
-    `Default Margin Mode: ${(settings as any).defaultMarginMode ?? 'CROSS'}\n` +
+    `Default Margin Mode: ${settings.defaultMarginMode}\n` +
     `Language: ${settings.language}\n` +
     `Timezone: ${settings.timezone}\n` +
     `Notifications: ${settings.notificationsOn ? 'On' : 'Off'}\n` +
@@ -97,6 +97,11 @@ export async function handleSettingsImportWallet(ctx: BotContext): Promise<void>
 
 export async function handleSettingsExportWallet(ctx: BotContext): Promise<void> {
   await ctx.answerCbQuery();
+
+  if (ctx.chat?.type !== 'private') {
+    await ctx.reply('For your security, wallet export is only available in a private chat with this bot.');
+    return;
+  }
 
   if (!ctx.appUserId) {
     await ctx.reply('Please send /start first.');

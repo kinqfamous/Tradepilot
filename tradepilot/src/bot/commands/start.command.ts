@@ -7,7 +7,7 @@ import { SCENE_IDS } from '../../constants';
 import { dashboardKeyboard, phoenixRegistrationKeyboard } from '../keyboards';
 import { phoenixReferralService } from '../../exchange/phoenix/phoenix-referral.service';
 import { marketQueryService } from '../../trading/market-query.service';
-import { formatNumber, formatUsd } from '../../utils/format';
+import { formatNumber, formatSignedPnlPercent, formatUsd } from '../../utils/format';
 import { MarketInfo } from '../../types/exchange.types';
 import { parseGroupTradeDeepLink } from '../group-trade.util';
 import { accountBalanceService } from '../../users/account-balance.service';
@@ -163,6 +163,7 @@ function formatOpenTrades(
         `${position.side === 'LONG' ? '🟢 Long' : '🔴 Short'} *${position.market}*`,
         `Margin: ${position.marginMode === 'ISOLATED' ? 'Isolated' : 'Cross'}`,
         `Entry: $${formatNumber(position.entryPrice)} | Size: ${formatNumber(position.size)}`,
+        `PnL: ${formatSignedPnlPercent(position.roePercent)}`,
         `Liq. Price: ${position.liquidationPrice === null ? 'Unavailable' : `$${formatNumber(position.liquidationPrice)}`}`,
         `SL: ${stopLoss === null || stopLoss === undefined ? 'None' : `$${formatNumber(Number(stopLoss))}`}`,
         `TP: ${takeProfit === null || takeProfit === undefined ? 'None' : `$${formatNumber(Number(takeProfit))}`}`,

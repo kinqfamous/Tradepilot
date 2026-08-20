@@ -27,6 +27,7 @@ export type FeeRepositoryLike = Pick<
   | 'getConfig'
   | 'updateConfig'
   | 'findByIdempotencyKey'
+  | 'findByOrderId'
   | 'createExpected'
   | 'markPending'
   | 'markConfirmed'
@@ -255,6 +256,13 @@ export class BuilderFeeService {
     const confirmed = await this.repo.markConfirmed(feeEventId, confirmedFeeUsd, builderTxSignature);
     await log.info('TRADE', 'Fee confirmed', { feeEventId, confirmedFeeUsd, builderTxSignature });
     return confirmed;
+  }
+
+  /** Resolves the deferred fee once a resting limit order is observed filled. */
+  async confirmFeeForOrder(orderId: number, builderTxSignature: string): Promise<FeeEvent | null> {
+    const event = await this.repo.findByOrderId(orderId);
+    if (!event || event.status === 'CONFIRMED') return event;
+    return this.confirmFee(event.id, Number(event.expectedFeeUsd), builderTxSignature);
   }
 
   /** Called when the underlying trade fails - the fee never happened either. */

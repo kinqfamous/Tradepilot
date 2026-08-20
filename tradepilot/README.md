@@ -61,11 +61,8 @@ Add your credentials and deployment settings to `.env`, then start the bot:
 npm run dev
 ```
 
-Run the notification worker separately:
-
-```bash
-npm run worker
-```
+The normal bot process also starts notification delivery and Phoenix fill reconciliation, so TP,
+SL, liquidation, and limit-fill cards work without a second command.
 
 For a production build:
 
@@ -73,6 +70,19 @@ For a production build:
 npm run build
 npm start
 ```
+
+The production build creates ESM bundles at `dist/index.mjs` and `dist/worker.mjs`. `npm start`
+already includes the worker. The standalone worker command is available only for deployments that
+intentionally run background processing without the bot process:
+
+```bash
+npm run start:worker
+```
+
+Do not run the standalone worker alongside the default bot process. Start the selected process with
+the project directory as its working directory so `.env` and runtime assets can be resolved.
+Production deployments must include `assets/`, `prisma/migrations/`, and
+installed production dependencies alongside `dist/`.
 
 Never commit `.env`, wallet keypairs, signing keys, or other secrets. Use a dedicated secret
 manager and restricted infrastructure for production deployments.

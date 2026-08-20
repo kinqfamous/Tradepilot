@@ -7,6 +7,17 @@ export interface NotificationJobData {
   notificationId: number;
   userId: number;
   message: string;
+  card?: {
+    market: string;
+    side: 'LONG' | 'SHORT';
+    leverage: number;
+    marginMode: 'CROSS' | 'ISOLATED';
+    entryPrice: number;
+    marketPrice: number;
+    exitPrice?: number;
+    pnlPercent?: number;
+    eventType?: 'ENTRY' | 'STOP_LOSS' | 'TAKE_PROFIT' | 'LIQUIDATION';
+  };
 }
 
 export const notificationQueue = new Queue<NotificationJobData>(NOTIFICATION_QUEUE_NAME, {

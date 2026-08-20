@@ -119,4 +119,23 @@ describe('PhoenixPositionAdapter', () => {
       { market: 'WTIOIL', size: 1, margin: 5, marginMode: 'ISOLATED' },
     ]);
   });
+
+  it('uses Phoenix\'s explicit subaccount index for liquidation lookup', async () => {
+    const client = {
+      get: vi.fn()
+        .mockResolvedValueOnce({ snapshot: { subaccounts: [{
+          subaccountIndex: 7,
+          collateral: '5000000',
+          positions: [{ positionSequenceNumber: '2', symbol: 'WTIOIL', basePositionUnits: '1', basePositionLots: '1', entryPriceUsd: '70', accumulatedFundingQuoteLots: '0' }],
+        }] } })
+        .mockResolvedValueOnce([{ symbol: 'WTIOIL', baseLotsDecimals: 0 }])
+        .mockResolvedValueOnce({ markets: [{ symbol: 'WTIOIL', mark_price: 71 }] }),
+    };
+    const liquidationReader = { getLiquidationPrice: vi.fn().mockResolvedValue(65) };
+    const adapter = new PhoenixPositionAdapter(client as any, liquidationReader);
+
+    await adapter.getOpenPositions({ walletAddress: 'wallet' });
+
+    expect(liquidationReader.getLiquidationPrice).toHaveBeenCalledWith('wallet', 7, 'WTIOIL');
+  });
 });

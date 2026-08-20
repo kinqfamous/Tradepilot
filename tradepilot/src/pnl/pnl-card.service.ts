@@ -6,12 +6,12 @@ export interface PnlCardData {
   market: string;
   side: 'LONG' | 'SHORT';
   leverage: number;
-  size: number;
-  pnlPercent: number;
+  marginMode: 'CROSS' | 'ISOLATED';
+  pnlPercent?: number;
   entryPrice: number;
   /** Mark price for an open position; close-fill price for a completed one. */
   exitPrice: number;
-  status: 'OPEN' | 'CLOSED';
+  status: 'OPEN' | 'CLOSED' | 'ENTRY' | 'STOP_LOSS' | 'TAKE_PROFIT' | 'LIQUIDATION';
 }
 
 function escapeXml(value: string): string {
@@ -37,11 +37,26 @@ const logoDataUri = `data:image/jpeg;base64,${readFileSync(
 /** Creates the PNG share card sent for open and closed position PnL. */
 export class PnlCardService {
   render(data: PnlCardData): Buffer {
-    const profitable = data.pnlPercent >= 0;
+    const isConfirmation = data.status === 'ENTRY';
+    const isExitEvent = ['STOP_LOSS', 'TAKE_PROFIT', 'LIQUIDATION'].includes(data.status);
+    const profitable = data.status === 'ENTRY' ? data.side === 'LONG' : (data.pnlPercent ?? 0) >= 0;
     const accent = profitable ? '#2DE38A' : '#FF5C6C';
     const pnlSign = profitable ? '+' : '-';
-    const priceLabel = data.status === 'OPEN' ? 'MARK PRICE' : 'CLOSE PRICE';
-    const title = data.status === 'OPEN' ? 'OPEN PNL' : 'CLOSED PNL';
+    const priceLabel = data.status === 'CLOSED' || isExitEvent ? 'EXIT PRICE' : 'MARK PRICE';
+    const title = data.status === 'ENTRY' ? 'LIMIT ORDER FILLED'
+      : data.status === 'STOP_LOSS' ? 'STOP LOSS FILLED'
+      : data.status === 'TAKE_PROFIT' ? 'TAKE PROFIT FILLED'
+      : data.status === 'LIQUIDATION' ? 'POSITION LIQUIDATED'
+      : data.status === 'OPEN' ? 'OPEN PNL' : 'CLOSED PNL';
+    const headlineLabel = isConfirmation ? 'STATUS'
+      : data.status === 'STOP_LOSS' ? 'SL PNL'
+      : data.status === 'TAKE_PROFIT' ? 'TP PNL'
+      : data.status === 'LIQUIDATION' ? 'LIQ PNL'
+      : 'PNL';
+    const headlineValue = isConfirmation
+      ? 'CONFIRMED'
+      : `${pnlSign}${Math.abs(data.pnlPercent ?? 0).toFixed(2)}%`;
+    const headlineSize = isConfirmation ? 42 : 70;
     const market = escapeXml(data.market.replace(/-PERP$/i, ''));
     const direction = data.side === 'LONG' ? 'LONG' : 'SHORT';
     const svg = `
@@ -63,14 +78,14 @@ export class PnlCardService {
         <rect x="86" y="319" width="105" height="39" rx="19" fill="${data.side === 'LONG' ? '#103b2a' : '#491c25'}"/>
         <text x="138" y="346" text-anchor="middle" fill="${accent}" font-family="Arial, sans-serif" font-weight="800" font-size="18">${direction}</text>
         <text x="212" y="346" fill="#c5c7cc" font-family="Arial, sans-serif" font-weight="700" font-size="22">${number(data.leverage, 2)}x</text>
-        <text x="1114" y="199" text-anchor="end" fill="#9b9da5" font-family="Arial, sans-serif" font-weight="700" font-size="19" letter-spacing="2">PNL</text>
-        <text x="1114" y="289" text-anchor="end" fill="${accent}" font-family="Arial, sans-serif" font-weight="900" font-size="70">${pnlSign}${Math.abs(data.pnlPercent).toFixed(2)}%</text>
+        <text x="1114" y="199" text-anchor="end" fill="#9b9da5" font-family="Arial, sans-serif" font-weight="700" font-size="19" letter-spacing="2">${headlineLabel}</text>
+        <text x="1114" y="289" text-anchor="end" fill="${accent}" font-family="Arial, sans-serif" font-weight="900" font-size="${headlineSize}">${headlineValue}</text>
         <line x1="86" y1="409" x2="1114" y2="409" stroke="#393b40" stroke-width="2"/>
         <text x="86" y="459" fill="#8e9098" font-family="Arial, sans-serif" font-weight="700" font-size="17" letter-spacing="1.5">ENTRY PRICE</text>
         <text x="86" y="500" fill="#ffffff" font-family="Arial, sans-serif" font-weight="700" font-size="28">$${number(data.entryPrice)}</text>
         <text x="506" y="459" fill="#8e9098" font-family="Arial, sans-serif" font-weight="700" font-size="17" letter-spacing="1.5">${priceLabel}</text>
         <text x="506" y="500" fill="#ffffff" font-family="Arial, sans-serif" font-weight="700" font-size="28">$${number(data.exitPrice)}</text>
-        <text x="86" y="559" fill="#777a82" font-family="Arial, sans-serif" font-size="17">Size ${number(data.size)} ${market}</text>
+        <text x="86" y="559" fill="#777a82" font-family="Arial, sans-serif" font-size="17">Margin ${data.marginMode === 'ISOLATED' ? 'Isolated' : 'Cross'}</text>
         <text x="1114" y="559" text-anchor="end" fill="#777a82" font-family="Arial, sans-serif" font-size="17">tradepilot</text>
       </svg>`;
 

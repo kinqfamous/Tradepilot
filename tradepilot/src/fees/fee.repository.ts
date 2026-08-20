@@ -56,6 +56,10 @@ export class FeeRepository {
     return prisma.feeEvent.findUnique({ where: { idempotencyKey: key } });
   }
 
+  async findByOrderId(orderId: number): Promise<FeeEvent | null> {
+    return prisma.feeEvent.findFirst({ where: { orderId } });
+  }
+
   async createExpected(data: Prisma.FeeEventUncheckedCreateInput): Promise<FeeEvent> {
     return prisma.feeEvent.create({ data });
   }
