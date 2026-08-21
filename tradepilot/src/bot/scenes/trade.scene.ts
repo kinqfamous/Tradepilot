@@ -357,6 +357,22 @@ export const tradeScene = new Scenes.WizardScene<BotContext>(
 
 async function showConfirmation(ctx: BotContext) {
   const s = state(ctx);
+  let entryPriceText = '';
+
+  if (s.orderType === 'MARKET') {
+    try {
+      const market = s.market
+        ? await marketQueryService.getMarket(s.exchange ?? config.defaultExchange, s.market)
+        : null;
+      entryPriceText = market && Number.isFinite(market.markPrice) && market.markPrice > 0
+        ? `Market Entry Price: ~$${formatNumber(market.markPrice)}\n`
+        : 'Market Entry Price: Currently unavailable\n';
+    } catch {
+      // The displayed price is an estimate and must not prevent confirmation.
+      entryPriceText = 'Market Entry Price: Currently unavailable\n';
+    }
+  }
+
   await ctx.reply(
     `🔍 *Review your trade*\n\n` +
       `Market: ${s.market}\n` +
@@ -364,6 +380,7 @@ async function showConfirmation(ctx: BotContext) {
       `Collateral: $${s.collateralUsd}\n` +
       `Leverage: ${s.leverage}x\n` +
       `Order Type: ${s.orderType}\n` +
+      entryPriceText +
       (s.limitPrice ? `Limit Price: ${s.limitPrice}\n` : '') +
       (s.stopLossPrice ? `Stop Loss: ${s.stopLossPrice}\n` : '') +
       (s.takeProfitPrice ? `Take Profit: ${s.takeProfitPrice}\n` : '') +

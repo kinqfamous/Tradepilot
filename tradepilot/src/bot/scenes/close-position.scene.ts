@@ -3,7 +3,7 @@ import { BotContext, ClosePositionWizardState } from '../../types/bot.types';
 import { SCENE_IDS } from '../../constants';
 import { tradingService } from '../../trading/trading.service';
 import { marketQueryService } from '../../trading/market-query.service';
-import { formatNumber, formatSignedPnlPercent, normalizeMarketSymbol } from '../../utils/format';
+import { formatNumber, formatSignedPnl, formatSignedPnlPercent, normalizeMarketSymbol } from '../../utils/format';
 import { closePercentKeyboard, confirmCancelKeyboard, mainMenuKeyboard } from '../keyboards';
 import { config } from '../../config/env';
 import { Input } from 'telegraf';
@@ -183,6 +183,7 @@ export const closePositionScene = new Scenes.WizardScene<BotContext>(
           `✅ Closed ${s.percent}% of *${s.market}*.\n` +
             (result.entryPrice === undefined ? '' : `Entry Price: $${formatNumber(result.entryPrice)}\n`) +
             (result.realizedPnlPercent === undefined ? '' : `\nRealized PnL: ${formatSignedPnlPercent(result.realizedPnlPercent)}\n`) +
+            (result.realizedPnl === undefined ? '' : `Dollar PnL: ${formatSignedPnl(result.realizedPnl)}\n`) +
             (result.txSignature ? `\nTx: \`${result.txSignature}\`` : ''),
           { parse_mode: 'Markdown', ...mainMenuKeyboard },
         );
